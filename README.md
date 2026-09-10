@@ -61,10 +61,10 @@ session cookie is marked `Secure` and the browser will drop it.
 ### Tests
 
 ```bash
-cd server && node --test test/api.test.mjs test/admin.test.mjs test/mail.test.mjs
+cd server && node --test test/*.test.mjs
 ```
 
-41 tests across three suites:
+49 tests across four suites:
 
 - **api** — event and report logic, and deliberately the multi-tenant boundary: a
   user in one family must get a 404 on every read and write path belonging to
@@ -75,6 +75,9 @@ cd server && node --test test/api.test.mjs test/admin.test.mjs test/mail.test.mj
 - **mail** — runs a real in-process SMTP server and asserts that closing a
   session delivers a multipart message to the parent and not the sitter, with
   the child's entries present in both the text and HTML parts.
+- **mail-config** — the port/TLS pairing. Port 465 is forced secure regardless
+  of `SMTP_SECURE`, mismatches are reported in the admin console, and opaque
+  SMTP errors are rewritten to name the likely cause.
 
 ## Configuration
 

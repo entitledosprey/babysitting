@@ -146,6 +146,10 @@ function Overview() {
         <div className="row"><span className="muted">Administrators</span><span className="spacer" /><strong>{data.mail.adminCount}</strong></div>
       </div>
 
+      {data.mail.warnings?.length > 0 && data.mail.warnings.map((w, i) => (
+        <div key={i} className="error" style={{ fontSize: '.84rem' }}>{w}</div>
+      ))}
+
       {data.mail.recentFailures.length > 0 && (
         <>
           <div className="section-title" style={{ marginTop: 10 }}>Recent delivery failures</div>

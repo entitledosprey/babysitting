@@ -191,7 +191,7 @@ export const admin = {
 
   emailLog: (status = '') =>
     get<{ entries: EmailLogEntry[] }>(`/api/admin/email-log${status ? `?status=${status}` : ''}`).then((r) => r.entries),
-  verifyMail: () => post<{ result: { ok: boolean; error?: string } }>('/api/admin/mail/verify').then((r) => r.result),
+  verifyMail: () => post<{ result: { ok: boolean; error?: string; warnings?: string[] } }>('/api/admin/mail/verify').then((r) => r.result),
   testMail: (to: string) =>
     post<{ result: { ok: boolean; error?: string; skipped?: boolean } }>('/api/admin/mail/test', { to }).then((r) => r.result),
 
@@ -208,7 +208,7 @@ export interface AdminOverview {
   storage: { dbBytes: number; walBytes: number; path: string };
   mail: {
     configured: boolean; host: string; port: number; secure: boolean; from: string;
-    authenticated: boolean; adminCount: number;
+    authenticated: boolean; adminCount: number; warnings: string[];
     recentFailures: { to_email: string; subject: string; error: string; created_at: string }[];
   };
   runtime: { uptimeSeconds: number; node: string; rssBytes: number; now: string };
