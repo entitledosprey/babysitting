@@ -57,7 +57,6 @@ function client() {
   };
 }
 
-const parent = client();
 const sitter = client();
 const state = {};
 const waitForMail = async (n) => {
@@ -68,44 +67,48 @@ const waitForMail = async (n) => {
   throw new Error(`expected ${n} message(s), saw ${sink.received.length}`);
 };
 
-test('a family with a parent and a sitter', async () => {
-  const p = await parent('POST', '/api/auth/register', {
-    email: 'mum@example.com', password: 'parent-password-1', name: 'Mum', familyName: 'The Testers',
+test('a sitter with one client, two contacts, one of whom gets reports', async () => {
+  const r = await sitter('POST', '/api/auth/register', {
+    email: 'sitter@example.com', password: 'sitter-password-1',
+    name: 'Sitter Sam', businessName: 'Sam Sitting',
   });
-  assert.equal(p.status, 201);
-  state.familyId = p.body.user.families[0].id;
+  assert.equal(r.status, 201);
 
-  const inv = await parent('POST', `/api/families/${state.familyId}/invites`, { role: 'sitter' });
-  await sitter('POST', '/api/auth/register', {
-    email: 'sitter@example.com', password: 'sitter-password-1', name: 'Sitter Sam',
-    inviteCode: inv.body.invite.code,
+  state.clientId = (await sitter('POST', '/api/clients', { name: 'The Testers' })).body.client.id;
+  state.childId = (await sitter('POST', `/api/clients/${state.clientId}/children`, { name: 'Robin' })).body.child.id;
+
+  await sitter('POST', `/api/clients/${state.clientId}/contacts`, {
+    name: 'Mum', email: 'mum@example.com', receivesReports: true, isPrimary: true,
   });
-
-  state.childId = (await parent('POST', `/api/families/${state.familyId}/children`, { name: 'Robin' })).body.child.id;
+  // Present on the client but explicitly opted out — must not receive anything.
+  await sitter('POST', `/api/clients/${state.clientId}/contacts`, {
+    name: 'Uncle', email: 'uncle@example.com', receivesReports: false,
+  });
 });
 
-test('closing a session emails the report to the parent only', async () => {
-  const sid = (await sitter('POST', `/api/families/${state.familyId}/sessions`, {
-    childIds: [state.childId],
-  })).body.session.id;
-  state.sessionId = sid;
+test('closing a shift emails the report to opted-in contacts only', async () => {
+  const sid = (await sitter('POST', '/api/shifts', {
+    clientId: state.clientId, startNow: true,
+  })).body.shift.id;
+  state.shiftId = sid;
 
-  await sitter('POST', `/api/sessions/${sid}/events`, {
+  await sitter('POST', `/api/shifts/${sid}/events`, {
     type: 'bottle', childId: state.childId, detail: { amountOz: 6, contents: 'formula' },
   });
-  await sitter('POST', `/api/sessions/${sid}/events`, {
+  await sitter('POST', `/api/shifts/${sid}/events`, {
     type: 'milestone', childId: state.childId, note: 'Rolled over on their own', detail: { kind: 'Developmental milestone' },
   });
-  assert.equal((await sitter('POST', `/api/sessions/${sid}/end`, {})).status, 200);
+  assert.equal((await sitter('POST', `/api/shifts/${sid}/end`, {})).status, 200);
 
   await waitForMail(1);
-  assert.equal(sink.received.length, 1, 'exactly one message: the parent, not the sitter');
+  assert.equal(sink.received.length, 1, 'one message: the opted-in contact only');
 
   const msg = sink.received[0];
   assert.match(msg.from, /log@example\.com/);
   assert.equal(msg.to.length, 1);
   assert.match(msg.to[0], /mum@example\.com/);
-  assert.ok(!msg.to.some((t) => t.includes('sitter@')), 'sitters must not receive the report');
+  assert.ok(!msg.to.some((t) => t.includes('uncle@')), 'a contact opted out of reports must not receive one');
+  assert.ok(!msg.to.some((t) => t.includes('sitter@')), 'the sitter is not a recipient');
 });
 
 const qpDecode = (s) => Buffer.from(
@@ -136,27 +139,27 @@ test('the message carries both a text and an HTML part with real content', async
   assert.match(decoded, /DAILY CHILDCARE REPORT/, 'plain text part');
   assert.match(decoded, /<!doctype html>/i, 'html part');
   assert.match(decoded, /Robin/, 'the child is named');
-  assert.match(decoded, /The Testers/, 'the family is named');
+  assert.match(decoded, /The Testers/, 'the client is named');
   assert.match(decoded, /Rolled over on their own/, 'the milestone made it in');
   assert.match(decoded, /6 oz/, 'the bottle made it in');
   assert.match(decoded, /babysitting\.example\.com/, 'APP_BASE_URL link included');
 });
 
-test('delivery is recorded as sent and stamped on the session', async () => {
+test('delivery is recorded as sent and stamped on the shift', async () => {
   const adminClient = client();
   await adminClient('POST', '/api/auth/register', {
-    email: 'admin@example.com', password: 'admin-password-1', name: 'Admin', familyName: 'Admin Family',
+    email: 'admin@example.com', password: 'admin-password-1', name: 'Admin',
   });
 
   const log = await adminClient('GET', '/api/admin/email-log');
-  const entry = log.body.entries.find((e) => e.sessionId === state.sessionId);
+  const entry = log.body.entries.find((e) => e.shiftId === state.shiftId);
   assert.ok(entry, 'delivery logged');
   assert.equal(entry.status, 'sent');
   assert.equal(entry.error, '');
 
-  const sessions = await adminClient('GET', '/api/admin/sessions');
-  const s = sessions.body.sessions.find((x) => x.id === state.sessionId);
-  assert.ok(s.reportSentAt, 'session stamped with report_sent_at');
+  const shifts = await adminClient('GET', '/api/admin/shifts');
+  const s = shifts.body.shifts.find((x) => x.id === state.shiftId);
+  assert.ok(s.reportSentAt, 'shift stamped with report_sent_at');
 });
 
 test('an admin resend delivers again', async () => {
@@ -164,7 +167,7 @@ test('an admin resend delivers again', async () => {
   await adminClient('POST', '/api/auth/login', { email: 'admin@example.com', password: 'admin-password-1' });
 
   const before = sink.received.length;
-  const r = await adminClient('POST', `/api/admin/sessions/${state.sessionId}/resend-report`);
+  const r = await adminClient('POST', `/api/admin/shifts/${state.shiftId}/resend-report`);
   assert.equal(r.status, 200);
   assert.equal(r.body.result.sent, 1);
 

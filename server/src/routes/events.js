@@ -2,11 +2,11 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { newId, nowIso } from '../auth.js';
 import { wrap, str, bad, isoTimestamp, HttpError } from '../http.js';
-import { loadSession, loadEvent, mapEvent } from '../access.js';
+import { loadShift, loadEvent, assertOwner, mapEvent } from '../access.js';
 import { EVENT_TYPES, isValidType } from '../types.js';
 
-/** Mounted at /api/sessions/:sessionId/events */
-export const sessionRouter = Router({ mergeParams: true });
+/** Mounted at /api/shifts/:shiftId/events */
+export const shiftRouter = Router({ mergeParams: true });
 
 /** Mounted at /api/events */
 export const router = Router();
@@ -21,27 +21,30 @@ const parseDetail = (value) => {
   return json;
 };
 
-const assertChildInSession = (sessionId, childId) => {
-  const ok = db.prepare('SELECT 1 FROM session_children WHERE session_id = ? AND child_id = ?')
-    .get(sessionId, childId);
-  if (!ok) bad('That child is not part of this session');
+const assertChildOnShift = (shiftId, childId) => {
+  const ok = db.prepare('SELECT 1 FROM shift_children WHERE shift_id = ? AND child_id = ?')
+    .get(shiftId, childId);
+  if (!ok) bad('That child is not on this shift');
 };
 
-sessionRouter.get('/', wrap(async (req, res) => {
-  const { session } = loadSession(req.params.sessionId, req.user.id);
-  const rows = db.prepare('SELECT * FROM events WHERE session_id = ? ORDER BY start_at, created_at')
-    .all(session.id);
-  res.json({ events: rows.map(mapEvent) });
+shiftRouter.get('/', wrap(async (req, res) => {
+  const { shift } = loadShift(req.params.shiftId, req.user);
+  res.json({
+    events: db.prepare('SELECT * FROM events WHERE shift_id = ? ORDER BY start_at, created_at')
+      .all(shift.id).map(mapEvent),
+  });
 }));
 
-sessionRouter.post('/', wrap(async (req, res) => {
-  const { session } = loadSession(req.params.sessionId, req.user.id);
+shiftRouter.post('/', wrap(async (req, res) => {
+  const { shift, access } = loadShift(req.params.shiftId, req.user);
+  assertOwner(access);
+  if (!shift.started_at) throw new HttpError(409, 'Start the shift before logging entries');
 
   const type = str(req.body.type, 'Type', { max: 30 });
-  if (!isValidType(type)) bad(`Unknown event type "${type}"`);
+  if (!isValidType(type)) bad(`Unknown entry type "${type}"`);
 
   const childId = str(req.body.childId, 'Child', { max: 64 });
-  assertChildInSession(session.id, childId);
+  assertChildOnShift(shift.id, childId);
 
   const startAt = isoTimestamp(req.body.startAt ?? nowIso(), 'startAt');
   const supportsDuration = EVENT_TYPES[type].duration;
@@ -57,8 +60,8 @@ sessionRouter.post('/', wrap(async (req, res) => {
   // silently produce overlapping blocks the report cannot add up.
   if (supportsDuration && endAt === null && req.body.running !== false) {
     const running = db.prepare(
-      'SELECT id FROM events WHERE session_id = ? AND child_id = ? AND type = ? AND end_at IS NULL'
-    ).get(session.id, childId, type);
+      'SELECT id FROM events WHERE shift_id = ? AND child_id = ? AND type = ? AND end_at IS NULL'
+    ).get(shift.id, childId, type);
     if (running) {
       throw new HttpError(409, `A ${EVENT_TYPES[type].label.toLowerCase()} is already running for this child`);
     }
@@ -67,10 +70,10 @@ sessionRouter.post('/', wrap(async (req, res) => {
   const id = newId();
   const now = nowIso();
   db.prepare(`
-    INSERT INTO events (id, session_id, child_id, type, start_at, end_at, note, detail, created_at, updated_at)
+    INSERT INTO events (id, shift_id, child_id, type, start_at, end_at, note, detail, created_at, updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?)
   `).run(
-    id, session.id, childId, type, startAt, endAt,
+    id, shift.id, childId, type, startAt, endAt,
     str(req.body.note ?? '', 'Note', { max: 2000, required: false }),
     parseDetail(req.body.detail), now, now,
   );
@@ -79,7 +82,8 @@ sessionRouter.post('/', wrap(async (req, res) => {
 }));
 
 router.patch('/:eventId', wrap(async (req, res) => {
-  const { event, session } = loadEvent(req.params.eventId, req.user.id);
+  const { event, shift, access } = loadEvent(req.params.eventId, req.user);
+  assertOwner(access);
 
   const startAt = req.body.startAt !== undefined
     ? isoTimestamp(req.body.startAt, 'startAt') : event.start_at;
@@ -97,40 +101,43 @@ router.patch('/:eventId', wrap(async (req, res) => {
   let childId = event.child_id;
   if (req.body.childId !== undefined) {
     childId = str(req.body.childId, 'Child', { max: 64 });
-    assertChildInSession(session.id, childId);
+    assertChildOnShift(shift.id, childId);
   }
-
-  const note = req.body.note !== undefined
-    ? str(req.body.note, 'Note', { max: 2000, required: false }) : event.note;
-  const detail = req.body.detail !== undefined ? parseDetail(req.body.detail) : event.detail;
 
   db.prepare(`
     UPDATE events SET child_id=?, start_at=?, end_at=?, note=?, detail=?, updated_at=? WHERE id=?
-  `).run(childId, startAt, endAt, note, detail, nowIso(), event.id);
+  `).run(
+    childId, startAt, endAt,
+    req.body.note !== undefined ? str(req.body.note, 'Note', { max: 2000, required: false }) : event.note,
+    req.body.detail !== undefined ? parseDetail(req.body.detail) : event.detail,
+    nowIso(), event.id,
+  );
 
   res.json({ event: mapEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(event.id)) });
 }));
 
-/** "Wake up" / stop — closes a running duration event. */
+/** "Wake up" / stop — closes a running duration entry. */
 router.post('/:eventId/stop', wrap(async (req, res) => {
-  const { event } = loadEvent(req.params.eventId, req.user.id);
+  const { event, access } = loadEvent(req.params.eventId, req.user);
+  assertOwner(access);
   if (event.end_at) throw new HttpError(409, 'That entry has already been stopped');
 
   const endAt = isoTimestamp(req.body.endAt ?? nowIso(), 'endAt');
   if (new Date(endAt) < new Date(event.start_at)) bad('The end time cannot be before the start time');
 
-  const detail = req.body.detail !== undefined ? parseDetail(req.body.detail) : event.detail;
-  const note = req.body.note !== undefined
-    ? str(req.body.note, 'Note', { max: 2000, required: false }) : event.note;
-
-  db.prepare('UPDATE events SET end_at=?, detail=?, note=?, updated_at=? WHERE id=?')
-    .run(endAt, detail, note, nowIso(), event.id);
+  db.prepare('UPDATE events SET end_at=?, detail=?, note=?, updated_at=? WHERE id=?').run(
+    endAt,
+    req.body.detail !== undefined ? parseDetail(req.body.detail) : event.detail,
+    req.body.note !== undefined ? str(req.body.note, 'Note', { max: 2000, required: false }) : event.note,
+    nowIso(), event.id,
+  );
 
   res.json({ event: mapEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(event.id)) });
 }));
 
 router.delete('/:eventId', wrap(async (req, res) => {
-  const { event } = loadEvent(req.params.eventId, req.user.id);
+  const { event, access } = loadEvent(req.params.eventId, req.user);
+  assertOwner(access);
   db.prepare('DELETE FROM events WHERE id = ?').run(event.id);
   res.json({ ok: true });
 }));

@@ -82,31 +82,6 @@ export function requireAuth(req, res, next) {
   next();
 }
 
-/**
- * Resolves the caller's membership in `familyId` and rejects non-members.
- * Every family-scoped route funnels through here so the tenant boundary lives
- * in exactly one place.
- */
-export function membershipOf(userId, familyId) {
-  return db.prepare(
-    'SELECT role FROM memberships WHERE user_id = ? AND family_id = ?'
-  ).get(userId, familyId);
-}
-
-export function requireFamily(getFamilyId) {
-  return (req, res, next) => {
-    const familyId = getFamilyId(req);
-    if (!familyId) return res.status(404).json({ error: 'Not found' });
-    const m = membershipOf(req.user.id, familyId);
-    // 404 rather than 403: a non-member should not be able to probe which
-    // family ids exist.
-    if (!m) return res.status(404).json({ error: 'Not found' });
-    req.familyId = familyId;
-    req.role = m.role;
-    next();
-  };
-}
-
 // Admins are named by environment variable, never by a database flag: the role
 // cannot be granted from inside the app, so compromising an account is not
 // enough to become an administrator.
@@ -122,13 +97,6 @@ export const adminCount = () => ADMIN_EMAILS.size;
 export function requireAdmin(req, res, next) {
   // 404 rather than 403 so the admin surface is not discoverable.
   if (!isAdmin(req.user)) return res.status(404).json({ error: 'Not found' });
-  next();
-}
-
-export function requireParent(req, res, next) {
-  if (req.role !== 'parent') {
-    return res.status(403).json({ error: 'Only a parent can do that' });
-  }
   next();
 }
 

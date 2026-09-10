@@ -6,24 +6,55 @@ import {
   cookieOptions, COOKIE_NAME, requireAuth, newId, nowIso,
   checkRateLimit, clearRateLimit, isAdmin,
 } from '../auth.js';
+import { businessOf } from '../access.js';
 import { wrap, str, bad, HttpError } from '../http.js';
 
 export const router = Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const familiesFor = (userId) => db.prepare(`
-  SELECT f.id, f.name, m.role
-    FROM memberships m JOIN families f ON f.id = m.family_id
-   WHERE m.user_id = ?
-   ORDER BY f.name
-`).all(userId);
-
-const publicUser = (user) => ({ ...user, families: familiesFor(user.id), isAdmin: isAdmin(user) });
+/** Ambiguity-free alphabet: no O/0 or I/1, so a code read aloud lands right. */
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const makeInviteCode = () =>
+  Array.from(randomBytes(8), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 
 /**
- * Register. Either creates a brand-new family (caller becomes its parent) or
- * consumes an invite code to join an existing one with the invited role.
+ * What the client needs to decide which app to render: the sitter's business,
+ * any clients they can view as a parent, and whether they administer the
+ * platform. A user with none of the three has an account and nothing else.
+ */
+const publicUser = (user) => {
+  const business = businessOf(user.id);
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    isAdmin: isAdmin(user),
+    business: business ? { id: business.id, name: business.name } : null,
+    parentOf: db.prepare(`
+      SELECT c.id, c.name, b.name AS businessName
+        FROM client_parents cp
+        JOIN clients c   ON c.id = cp.client_id
+        JOIN businesses b ON b.id = c.business_id
+       WHERE cp.user_id = ?
+       ORDER BY c.name
+    `).all(user.id),
+  };
+};
+
+const consumeInvite = (code) => {
+  const invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(code);
+  if (!invite || invite.used_by || invite.expires_at < nowIso()) {
+    bad('That invite code is not valid or has expired');
+  }
+  return invite;
+};
+
+/**
+ * Register. Three shapes:
+ *   inviteCode   → a parent joining, read-only, linked to one client
+ *   businessName → a sitter starting their business
+ *   neither      → allowed only for platform admins, who need no business
  */
 router.post('/register', wrap(async (req, res) => {
   const email = str(req.body.email, 'Email', { max: 320 }).toLowerCase();
@@ -32,43 +63,39 @@ router.post('/register', wrap(async (req, res) => {
   if (password.length < 8) bad('Password must be at least 8 characters');
   if (password.length > 200) bad('Password is too long');
   const name = str(req.body.name, 'Name', { max: 100 });
-  const inviteCode = req.body.inviteCode ? str(req.body.inviteCode, 'Invite code', { max: 40 }).toUpperCase() : null;
+
+  const inviteCode = req.body.inviteCode
+    ? str(req.body.inviteCode, 'Invite code', { max: 40 }).toUpperCase() : null;
+  const businessName = req.body.businessName
+    ? str(req.body.businessName, 'Business name', { max: 100 }) : null;
 
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
     bad('An account with that email already exists');
   }
 
-  let invite = null;
-  if (inviteCode) {
-    invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(inviteCode);
-    if (!invite || invite.used_by || invite.expires_at < nowIso()) {
-      bad('That invite code is not valid or has expired');
-    }
-  } else {
-    str(req.body.familyName, 'Family name', { max: 100 });
+  const invite = inviteCode ? consumeInvite(inviteCode) : null;
+  if (!invite && !businessName && !isAdmin({ email })) {
+    bad('Enter a name for your babysitting business, or an invite code if a sitter invited you');
   }
 
   const hash = await hashPassword(password);
   const userId = newId();
   const now = nowIso();
 
-  const tx = db.prepare('BEGIN');
-  tx.run();
+  db.prepare('BEGIN').run();
   try {
     db.prepare('INSERT INTO users (id,email,password_hash,name,created_at) VALUES (?,?,?,?,?)')
       .run(userId, email, hash, name, now);
 
     if (invite) {
-      db.prepare('INSERT INTO memberships (user_id,family_id,role,created_at) VALUES (?,?,?,?)')
-        .run(userId, invite.family_id, invite.role, now);
+      db.prepare('INSERT INTO client_parents (user_id, client_id, created_at) VALUES (?,?,?)')
+        .run(userId, invite.client_id, now);
       db.prepare('UPDATE invites SET used_by = ?, used_at = ? WHERE code = ?')
         .run(userId, now, invite.code);
-    } else {
-      const familyId = newId();
-      db.prepare('INSERT INTO families (id,name,created_at) VALUES (?,?,?)')
-        .run(familyId, str(req.body.familyName, 'Family name', { max: 100 }), now);
-      db.prepare('INSERT INTO memberships (user_id,family_id,role,created_at) VALUES (?,?,?,?)')
-        .run(userId, familyId, 'parent', now);
+    } else if (businessName) {
+      db.prepare(`
+        INSERT INTO businesses (id, owner_user_id, name, created_at) VALUES (?,?,?,?)
+      `).run(newId(), userId, businessName, now);
     }
     db.prepare('COMMIT').run();
   } catch (err) {
@@ -100,7 +127,7 @@ router.post('/login', wrap(async (req, res) => {
   clearRateLimit(key);
   const { token, expires } = createAuthSession(row.id);
   res.cookie(COOKIE_NAME, token, cookieOptions(expires));
-  res.json({ user: publicUser({ id: row.id, email: row.email, name: row.name }) });
+  res.json({ user: publicUser(row) });
 }));
 
 router.post('/logout', (req, res) => {
@@ -114,20 +141,18 @@ router.get('/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-/** Join another family from inside an existing account. */
+/** Accept a parent invite from inside an existing account. */
 router.post('/join', requireAuth, wrap(async (req, res) => {
   const code = str(req.body.inviteCode, 'Invite code', { max: 40 }).toUpperCase();
-  const invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(code);
-  if (!invite || invite.used_by || invite.expires_at < nowIso()) {
-    bad('That invite code is not valid or has expired');
-  }
-  const existing = db.prepare('SELECT 1 FROM memberships WHERE user_id = ? AND family_id = ?')
-    .get(req.user.id, invite.family_id);
-  if (existing) bad('You are already a member of that family');
+  const invite = consumeInvite(code);
+
+  const existing = db.prepare('SELECT 1 FROM client_parents WHERE user_id = ? AND client_id = ?')
+    .get(req.user.id, invite.client_id);
+  if (existing) bad('You already have access to that family');
 
   const now = nowIso();
-  db.prepare('INSERT INTO memberships (user_id,family_id,role,created_at) VALUES (?,?,?,?)')
-    .run(req.user.id, invite.family_id, invite.role, now);
+  db.prepare('INSERT INTO client_parents (user_id, client_id, created_at) VALUES (?,?,?)')
+    .run(req.user.id, invite.client_id, now);
   db.prepare('UPDATE invites SET used_by = ?, used_at = ? WHERE code = ?')
     .run(req.user.id, now, code);
 
@@ -151,10 +176,3 @@ router.post('/password', requireAuth, wrap(async (req, res) => {
   res.cookie(COOKIE_NAME, token, cookieOptions(expires));
   res.json({ ok: true });
 }));
-
-// Ambiguity-free alphabet: no O/0, I/1, so a code read aloud or typed from a
-// phone screen lands correctly.
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-export const makeInviteCode = () =>
-  Array.from(randomBytes(8), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');

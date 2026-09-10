@@ -108,21 +108,23 @@ function summarise(events) {
 }
 
 /**
- * Builds the end-of-day report: one rollup per child in the session, plus the
- * session envelope. `children` comes from access.childrenOf().
+ * Builds the end-of-shift report: one rollup per child on the shift, plus the
+ * shift envelope. `children` comes from access.childrenOfShift().
  */
-export function buildReport(session, children, events, meta = {}) {
+export function buildReport(shift, children, events, meta = {}) {
   return {
-    session: {
-      id: session.id,
-      date: session.date,
-      startedAt: session.started_at,
-      endedAt: session.ended_at,
-      durationMinutes: session.ended_at
-        ? Math.round(ms(session.started_at, session.ended_at) / 60000) : null,
-      notes: session.notes,
+    shift: {
+      id: shift.id,
+      date: shift.date,
+      startedAt: shift.started_at,
+      endedAt: shift.ended_at,
+      durationMinutes: shift.ended_at
+        ? Math.round(ms(shift.started_at, shift.ended_at) / 60000) : null,
+      notes: shift.notes,
+      parentNotes: shift.parent_notes ?? '',
       sitterName: meta.sitterName ?? '',
-      familyName: meta.familyName ?? '',
+      clientName: meta.clientName ?? '',
+      businessName: meta.businessName ?? '',
     },
     children: children.map((child) => ({
       child,
@@ -162,13 +164,14 @@ export function renderReportText(report) {
   const line = (s = '') => L.push(s);
 
   line('DAILY CHILDCARE REPORT');
-  if (report.session.familyName) line(report.session.familyName);
-  line(fmtDate(report.session.startedAt));
+  if (report.shift.clientName) line(report.shift.clientName);
+  line(fmtDate(report.shift.startedAt));
   line(
-    `${t(report.session.startedAt)} – ${report.session.endedAt ? t(report.session.endedAt) : 'in progress'}` +
-    (report.session.durationMinutes != null ? `  (${formatDuration(report.session.durationMinutes)})` : '')
+    `${t(report.shift.startedAt)} – ${report.shift.endedAt ? t(report.shift.endedAt) : 'in progress'}` +
+    (report.shift.durationMinutes != null ? `  (${formatDuration(report.shift.durationMinutes)})` : '')
   );
-  if (report.session.sitterName) line(`Caregiver: ${report.session.sitterName}`);
+  if (report.shift.sitterName) line(`Caregiver: ${report.shift.sitterName}`);
+  if (report.shift.businessName) line(report.shift.businessName);
   line();
 
   for (const entry of report.children) {
@@ -277,9 +280,9 @@ export function renderReportText(report) {
     line();
   }
 
-  if (report.session.notes) {
-    line('SESSION NOTES');
-    line(`  ${report.session.notes}`);
+  if (report.shift.notes) {
+    line('NOTES FROM THE SHIFT');
+    line(`  ${report.shift.notes}`);
     line();
   }
 
@@ -398,14 +401,14 @@ export function renderReportHtml(report, { appUrl = '' } = {}) {
   <div style="max-width:620px;margin:0 auto">
     <div style="background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:18px">
       <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${C.accent}">Daily Childcare Report</div>
-      <h1 style="margin:6px 0 2px;font-size:22px">${esc(report.session.familyName)}</h1>
-      <div style="color:${C.dim};font-size:14px">${esc(fmtDate(report.session.startedAt))}</div>
+      <h1 style="margin:6px 0 2px;font-size:22px">${esc(report.shift.clientName)}</h1>
+      <div style="color:${C.dim};font-size:14px">${esc(fmtDate(report.shift.startedAt))}</div>
       <div style="color:${C.dim};font-size:14px;margin-top:4px">
-        ${esc(t(report.session.startedAt))}${report.session.endedAt ? ` – ${esc(t(report.session.endedAt))}` : ''}
-        ${report.session.durationMinutes != null ? ` · ${esc(formatDuration(report.session.durationMinutes))}` : ''}
+        ${esc(t(report.shift.startedAt))}${report.shift.endedAt ? ` – ${esc(t(report.shift.endedAt))}` : ''}
+        ${report.shift.durationMinutes != null ? ` · ${esc(formatDuration(report.shift.durationMinutes))}` : ''}
       </div>
-      ${report.session.sitterName ? `<div style="color:${C.faint};font-size:13px;margin-top:4px">Caregiver: ${esc(report.session.sitterName)}</div>` : ''}
-      ${report.session.notes ? `<p style="margin:12px 0 0;font-size:14px;padding:10px;background:${C.bg};border-radius:8px">${esc(report.session.notes)}</p>` : ''}
+      ${report.shift.sitterName ? `<div style="color:${C.faint};font-size:13px;margin-top:4px">Caregiver: ${esc(report.shift.sitterName)}</div>` : ''}
+      ${report.shift.notes ? `<p style="margin:12px 0 0;font-size:14px;padding:10px;background:${C.bg};border-radius:8px">${esc(report.shift.notes)}</p>` : ''}
     </div>
 
     ${children}
@@ -414,7 +417,7 @@ export function renderReportHtml(report, { appUrl = '' } = {}) {
       <a href="${esc(appUrl)}" style="color:${C.accent};font-size:13px;text-decoration:none">Open the full log →</a>
     </p>` : ''}
     <p style="text-align:center;color:${C.faint};font-size:11px;margin-top:14px">
-      Sent automatically when the session was closed out.
+      ${report.shift.businessName ? `${esc(report.shift.businessName)} · ` : ''}sent automatically when the shift was closed out.
     </p>
   </div>
 </body></html>`;

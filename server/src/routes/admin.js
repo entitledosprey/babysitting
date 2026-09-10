@@ -4,7 +4,8 @@ import { db } from '../db.js';
 import { hashPassword, nowIso, adminCount } from '../auth.js';
 import { wrap, str, bad, notFound, HttpError } from '../http.js';
 import { mailSettings, verifyTransport, sendMail } from '../mailer.js';
-import { sendSessionReport, reportRecipients } from '../report-email.js';
+import { sendShiftReport, reportRecipients } from '../report-email.js';
+import { shiftStatus, shiftMinutes } from '../access.js';
 
 export const router = Router();
 
@@ -19,29 +20,31 @@ const fileSize = (path) => {
 // --- Overview ----------------------------------------------------------------
 
 router.get('/overview', wrap(async (_req, res) => {
-  const recentFailures = db.prepare(`
-    SELECT to_email, subject, error, created_at FROM email_log
-     WHERE status = 'failed' ORDER BY created_at DESC LIMIT 10
-  `).all();
-
   res.json({
     counts: {
-      users:     count('SELECT COUNT(*) n FROM users'),
-      disabled:  count('SELECT COUNT(*) n FROM users WHERE disabled = 1'),
-      families:  count('SELECT COUNT(*) n FROM families'),
-      children:  count('SELECT COUNT(*) n FROM children WHERE archived = 0'),
-      sessions:  count('SELECT COUNT(*) n FROM sessions'),
-      open:      count('SELECT COUNT(*) n FROM sessions WHERE ended_at IS NULL'),
-      events:    count('SELECT COUNT(*) n FROM events'),
-      invites:   count('SELECT COUNT(*) n FROM invites WHERE used_by IS NULL AND expires_at > ?', nowIso()),
-      logins:    count('SELECT COUNT(*) n FROM auth_sessions WHERE expires_at > ?', nowIso()),
+      users:      count('SELECT COUNT(*) n FROM users'),
+      disabled:   count('SELECT COUNT(*) n FROM users WHERE disabled = 1'),
+      businesses: count('SELECT COUNT(*) n FROM businesses'),
+      clients:    count('SELECT COUNT(*) n FROM clients WHERE archived = 0'),
+      children:   count('SELECT COUNT(*) n FROM children WHERE archived = 0'),
+      shifts:     count('SELECT COUNT(*) n FROM shifts'),
+      active:     count('SELECT COUNT(*) n FROM shifts WHERE started_at IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL'),
+      upcoming:   count('SELECT COUNT(*) n FROM shifts WHERE started_at IS NULL AND cancelled_at IS NULL'),
+      events:     count('SELECT COUNT(*) n FROM events'),
+      invoices:   count('SELECT COUNT(*) n FROM invoices'),
+      parents:    count('SELECT COUNT(DISTINCT user_id) n FROM client_parents'),
+      invites:    count('SELECT COUNT(*) n FROM invites WHERE used_by IS NULL AND expires_at > ?', nowIso()),
+      logins:     count('SELECT COUNT(*) n FROM auth_sessions WHERE expires_at > ?', nowIso()),
     },
-    storage: {
-      dbBytes:  fileSize(DB_PATH),
-      walBytes: fileSize(`${DB_PATH}-wal`),
-      path: DB_PATH,
+    storage: { dbBytes: fileSize(DB_PATH), walBytes: fileSize(`${DB_PATH}-wal`), path: DB_PATH },
+    mail: {
+      ...mailSettings(),
+      adminCount: adminCount(),
+      recentFailures: db.prepare(`
+        SELECT to_email, subject, error, created_at FROM email_log
+         WHERE status = 'failed' ORDER BY created_at DESC LIMIT 10
+      `).all(),
     },
-    mail: { ...mailSettings(), adminCount: adminCount(), recentFailures },
     runtime: {
       uptimeSeconds: Math.round(process.uptime()),
       node: process.version,
@@ -50,7 +53,7 @@ router.get('/overview', wrap(async (_req, res) => {
     },
     activity: {
       last7Days: db.prepare(`
-        SELECT date, COUNT(*) AS sessions FROM sessions
+        SELECT date, COUNT(*) AS shifts FROM shifts
          WHERE date >= date('now', '-7 days') GROUP BY date ORDER BY date DESC
       `).all(),
     },
@@ -59,26 +62,28 @@ router.get('/overview', wrap(async (_req, res) => {
 
 // --- Users -------------------------------------------------------------------
 
-const userRow = (u) => ({
-  id: u.id,
-  email: u.email,
-  name: u.name,
-  disabled: !!u.disabled,
-  createdAt: u.created_at,
-  lastSeenAt: u.last_seen_at,
-  families: db.prepare(`
-    SELECT f.id, f.name, m.role FROM memberships m
-      JOIN families f ON f.id = m.family_id WHERE m.user_id = ?
-  `).all(u.id),
-});
+const userRow = (u) => {
+  const business = db.prepare('SELECT id, name FROM businesses WHERE owner_user_id = ?').get(u.id);
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    disabled: !!u.disabled,
+    createdAt: u.created_at,
+    lastSeenAt: u.last_seen_at,
+    business: business ?? null,
+    parentOf: db.prepare(`
+      SELECT c.id, c.name FROM client_parents cp JOIN clients c ON c.id = cp.client_id
+       WHERE cp.user_id = ?
+    `).all(u.id),
+  };
+};
 
 router.get('/users', wrap(async (req, res) => {
   const q = String(req.query.q ?? '').trim();
   const rows = q
-    ? db.prepare(`
-        SELECT * FROM users WHERE email LIKE ? OR name LIKE ?
-         ORDER BY created_at DESC LIMIT 200
-      `).all(`%${q}%`, `%${q}%`)
+    ? db.prepare('SELECT * FROM users WHERE email LIKE ? OR name LIKE ? ORDER BY created_at DESC LIMIT 200')
+        .all(`%${q}%`, `%${q}%`)
     : db.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 200').all();
   res.json({ users: rows.map(userRow) });
 }));
@@ -95,7 +100,7 @@ router.patch('/users/:userId', wrap(async (req, res) => {
   const disabled = req.body.disabled !== undefined ? (req.body.disabled ? 1 : 0) : u.disabled;
 
   db.prepare('UPDATE users SET name = ?, disabled = ? WHERE id = ?').run(name, disabled, u.id);
-  // Disabling should take effect immediately, not at token expiry.
+  // Disabling takes effect immediately rather than at token expiry.
   if (disabled) db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(u.id);
 
   res.json({ user: userRow(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
@@ -109,7 +114,6 @@ router.post('/users/:userId/password', wrap(async (req, res) => {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
     .run(await hashPassword(newPassword), u.id);
   db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(u.id);
-
   res.json({ ok: true });
 }));
 
@@ -117,97 +121,124 @@ router.delete('/users/:userId', wrap(async (req, res) => {
   const u = getUser(req.params.userId);
   if (u.id === req.user.id) bad('You cannot delete the account you are signed in with');
 
-  // Families the user is the last parent of would be left unmanageable, so
-  // surface that rather than silently orphaning them.
-  const orphaned = db.prepare(`
-    SELECT f.id, f.name FROM memberships m JOIN families f ON f.id = m.family_id
-     WHERE m.user_id = ? AND m.role = 'parent'
-       AND (SELECT COUNT(*) FROM memberships m2
-             WHERE m2.family_id = f.id AND m2.role = 'parent') = 1
-  `).all(u.id);
-
-  if (orphaned.length && req.query.force !== 'true') {
-    throw new HttpError(409, `That user is the only parent of: ${orphaned.map((f) => f.name).join(', ')}. Retry with force=true to delete anyway.`);
+  // Deleting a sitter cascades to their whole business: clients, shifts, the
+  // lot. Say so plainly rather than discovering it afterwards.
+  const business = db.prepare('SELECT id, name FROM businesses WHERE owner_user_id = ?').get(u.id);
+  if (business && req.query.force !== 'true') {
+    const clients = count('SELECT COUNT(*) n FROM clients WHERE business_id = ?', business.id);
+    const shifts = count('SELECT COUNT(*) n FROM shifts WHERE business_id = ?', business.id);
+    throw new HttpError(409,
+      `That user owns "${business.name}" (${clients} client(s), ${shifts} shift(s)), which will be deleted too. Retry with force=true.`);
   }
 
   db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
-  res.json({ ok: true, orphanedFamilies: orphaned });
+  res.json({ ok: true, deletedBusiness: business ?? null });
 }));
 
-// --- Families ----------------------------------------------------------------
+// --- Businesses --------------------------------------------------------------
 
-router.get('/families', wrap(async (_req, res) => {
+router.get('/businesses', wrap(async (_req, res) => {
   res.json({
-    families: db.prepare(`
-      SELECT f.id, f.name, f.created_at AS createdAt,
-             (SELECT COUNT(*) FROM memberships m WHERE m.family_id = f.id) AS members,
-             (SELECT COUNT(*) FROM children c  WHERE c.family_id = f.id AND c.archived = 0) AS children,
-             (SELECT COUNT(*) FROM sessions s  WHERE s.family_id = f.id) AS sessions
-        FROM families f ORDER BY f.created_at DESC LIMIT 200
+    businesses: db.prepare(`
+      SELECT b.id, b.name, b.currency, b.default_rate_cents AS defaultRateCents,
+             b.created_at AS createdAt, u.name AS ownerName, u.email AS ownerEmail,
+             (SELECT COUNT(*) FROM clients c WHERE c.business_id = b.id AND c.archived = 0) AS clients,
+             (SELECT COUNT(*) FROM shifts s WHERE s.business_id = b.id) AS shifts
+        FROM businesses b JOIN users u ON u.id = b.owner_user_id
+       ORDER BY b.created_at DESC LIMIT 200
     `).all(),
   });
 }));
 
-router.get('/families/:familyId', wrap(async (req, res) => {
-  const family = db.prepare('SELECT * FROM families WHERE id = ?').get(req.params.familyId);
-  if (!family) notFound('Family not found');
+router.get('/businesses/:businessId', wrap(async (req, res) => {
+  const business = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.params.businessId);
+  if (!business) notFound('Business not found');
+  const owner = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(business.owner_user_id);
 
   res.json({
-    family: {
-      id: family.id, name: family.name, createdAt: family.created_at,
-      members: db.prepare(`
-        SELECT u.id, u.name, u.email, m.role, u.disabled FROM memberships m
-          JOIN users u ON u.id = m.user_id WHERE m.family_id = ? ORDER BY m.role, u.name
-      `).all(family.id),
-      children: db.prepare('SELECT id, name, colour, archived FROM children WHERE family_id = ? ORDER BY name').all(family.id),
-      sessions: db.prepare(`
-        SELECT s.id, s.date, s.started_at AS startedAt, s.ended_at AS endedAt,
-               s.report_sent_at AS reportSentAt,
-               (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id) AS events
-          FROM sessions s WHERE s.family_id = ? ORDER BY s.started_at DESC LIMIT 100
-      `).all(family.id),
-      recipients: reportRecipients(family.id),
+    business: {
+      id: business.id,
+      name: business.name,
+      currency: business.currency,
+      defaultRateCents: business.default_rate_cents,
+      createdAt: business.created_at,
+      owner,
+      clients: db.prepare(`
+        SELECT c.id, c.name, c.archived,
+               (SELECT COUNT(*) FROM children ch WHERE ch.client_id = c.id AND ch.archived = 0) AS children,
+               (SELECT COUNT(*) FROM shifts s WHERE s.client_id = c.id) AS shifts,
+               (SELECT COUNT(*) FROM client_parents cp WHERE cp.client_id = c.id) AS parents
+          FROM clients c WHERE c.business_id = ? ORDER BY c.archived, c.name
+      `).all(business.id),
     },
   });
 }));
 
-router.delete('/families/:familyId', wrap(async (req, res) => {
-  const family = db.prepare('SELECT * FROM families WHERE id = ?').get(req.params.familyId);
-  if (!family) notFound('Family not found');
-  if (str(req.body?.confirmName ?? '', 'Confirmation', { required: false }) !== family.name) {
-    bad('Type the family name exactly to confirm deletion');
+router.delete('/businesses/:businessId', wrap(async (req, res) => {
+  const business = db.prepare('SELECT * FROM businesses WHERE id = ?').get(req.params.businessId);
+  if (!business) notFound('Business not found');
+  if (str(req.body?.confirmName ?? '', 'Confirmation', { required: false }) !== business.name) {
+    bad('Type the business name exactly to confirm deletion');
   }
-  db.prepare('DELETE FROM families WHERE id = ?').run(family.id);
+  db.prepare('DELETE FROM businesses WHERE id = ?').run(business.id);
   res.json({ ok: true });
 }));
 
-// --- Sessions ----------------------------------------------------------------
+// --- Clients -----------------------------------------------------------------
 
-router.get('/sessions', wrap(async (req, res) => {
-  const familyId = req.query.familyId ? String(req.query.familyId) : null;
-  const rows = familyId
-    ? db.prepare('SELECT * FROM sessions WHERE family_id = ? ORDER BY started_at DESC LIMIT 100').all(familyId)
-    : db.prepare('SELECT * FROM sessions ORDER BY started_at DESC LIMIT 100').all();
+router.get('/clients/:clientId', wrap(async (req, res) => {
+  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.clientId);
+  if (!client) notFound('Client not found');
 
   res.json({
-    sessions: rows.map((s) => ({
+    client: {
+      id: client.id,
+      name: client.name,
+      archived: !!client.archived,
+      createdAt: client.created_at,
+      businessName: db.prepare('SELECT name FROM businesses WHERE id = ?').get(client.business_id)?.name ?? '',
+      children: db.prepare('SELECT id, name, colour, archived FROM children WHERE client_id = ?').all(client.id),
+      contacts: db.prepare('SELECT id, name, email, receives_reports AS receivesReports FROM client_contacts WHERE client_id = ?').all(client.id),
+      parents: db.prepare(`
+        SELECT u.id, u.name, u.email FROM client_parents cp JOIN users u ON u.id = cp.user_id
+         WHERE cp.client_id = ?
+      `).all(client.id),
+      recipients: reportRecipients(client.id),
+    },
+  });
+}));
+
+// --- Shifts ------------------------------------------------------------------
+
+router.get('/shifts', wrap(async (req, res) => {
+  const clientId = req.query.clientId ? String(req.query.clientId) : null;
+  const rows = clientId
+    ? db.prepare('SELECT * FROM shifts WHERE client_id = ? ORDER BY date DESC LIMIT 100').all(clientId)
+    : db.prepare('SELECT * FROM shifts ORDER BY date DESC, created_at DESC LIMIT 100').all();
+
+  res.json({
+    shifts: rows.map((s) => ({
       id: s.id,
-      familyId: s.family_id,
-      familyName: db.prepare('SELECT name FROM families WHERE id = ?').get(s.family_id)?.name ?? '(deleted)',
+      clientId: s.client_id,
+      clientName: db.prepare('SELECT name FROM clients WHERE id = ?').get(s.client_id)?.name ?? '(deleted)',
+      businessName: db.prepare('SELECT name FROM businesses WHERE id = ?').get(s.business_id)?.name ?? '(deleted)',
       sitterName: db.prepare('SELECT name FROM users WHERE id = ?').get(s.sitter_user_id)?.name ?? '(deleted)',
       date: s.date,
       startedAt: s.started_at,
       endedAt: s.ended_at,
+      status: shiftStatus(s),
+      minutes: shiftMinutes(s),
       reportSentAt: s.report_sent_at,
-      events: count('SELECT COUNT(*) n FROM events WHERE session_id = ?', s.id),
+      events: count('SELECT COUNT(*) n FROM events WHERE shift_id = ?', s.id),
     })),
   });
 }));
 
-router.post('/sessions/:sessionId/resend-report', wrap(async (req, res) => {
-  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.sessionId);
-  if (!session) notFound('Session not found');
-  res.json({ result: await sendSessionReport(session) });
+router.post('/shifts/:shiftId/resend-report', wrap(async (req, res) => {
+  const shift = db.prepare('SELECT * FROM shifts WHERE id = ?').get(req.params.shiftId);
+  if (!shift) notFound('Shift not found');
+  if (!shift.started_at) bad('That shift has not been worked yet');
+  res.json({ result: await sendShiftReport(shift) });
 }));
 
 // --- Mail --------------------------------------------------------------------
@@ -219,8 +250,8 @@ router.get('/email-log', wrap(async (req, res) => {
     : db.prepare('SELECT * FROM email_log ORDER BY created_at DESC LIMIT 200').all();
   res.json({
     entries: rows.map((e) => ({
-      id: e.id, sessionId: e.session_id, to: e.to_email, subject: e.subject,
-      status: e.status, error: e.error, createdAt: e.created_at,
+      id: e.id, shiftId: e.shift_id, invoiceId: e.invoice_id, to: e.to_email,
+      subject: e.subject, status: e.status, error: e.error, createdAt: e.created_at,
     })),
   });
 }));
@@ -258,13 +289,12 @@ router.post('/maintenance/backup', wrap(async (_req, res) => {
 
 router.post('/maintenance/prune', wrap(async (_req, res) => {
   const now = nowIso();
-  const sessions = db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(now).changes;
+  const logins = db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(now).changes;
   const invites = db.prepare('DELETE FROM invites WHERE used_by IS NULL AND expires_at < ?').run(now).changes;
   const emails = db.prepare("DELETE FROM email_log WHERE created_at < date('now','-90 days')").run().changes;
-  res.json({ ok: true, expiredLogins: sessions, expiredInvites: invites, oldEmailLogs: emails });
+  res.json({ ok: true, expiredLogins: logins, expiredInvites: invites, oldEmailLogs: emails });
 }));
 
-// Used by the UI to label the current operator.
 router.get('/whoami', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name });
 });

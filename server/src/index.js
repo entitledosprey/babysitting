@@ -5,15 +5,17 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { pruneExpired } from './db.js';
-import { loadUser, requireAuth, requireFamily, requireAdmin } from './auth.js';
+import { loadUser, requireAuth, requireAdmin } from './auth.js';
 import { HttpError } from './http.js';
 import { EVENT_TYPES } from './types.js';
 
 import { router as authRouter } from './routes/auth.js';
-import { router as familiesRouter } from './routes/families.js';
-import { familyRouter as familySessionsRouter, router as sessionsRouter } from './routes/sessions.js';
-import { sessionRouter as sessionEventsRouter, router as eventsRouter } from './routes/events.js';
+import { router as businessRouter } from './routes/business.js';
+import { router as clientsRouter } from './routes/clients.js';
+import { router as shiftsRouter } from './routes/shifts.js';
+import { shiftRouter as shiftEventsRouter, router as eventsRouter } from './routes/events.js';
 import { router as reportsRouter } from './routes/reports.js';
+import { router as invoicesRouter } from './routes/invoices.js';
 import { router as adminRouter } from './routes/admin.js';
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -32,20 +34,17 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, uptime: process.uptim
 app.get('/api/event-types', (_req, res) => res.json({ types: EVENT_TYPES }));
 
 app.use('/api/auth', authRouter);
-app.use('/api/families', requireAuth, familiesRouter);
 
-// Family-scoped session listing/creation sits under the family guard; operations
-// on an existing session resolve their family from the row itself.
-familiesRouter.use(
-  '/:familyId/sessions',
-  requireFamily((req) => req.params.familyId),
-  familySessionsRouter,
-);
-
-app.use('/api/sessions/:sessionId/events', requireAuth, sessionEventsRouter);
-app.use('/api/sessions/:sessionId', requireAuth, reportsRouter);
-app.use('/api/sessions', requireAuth, sessionsRouter);
+// Every route below resolves access through access.js: the sitter who owns the
+// business gets read and write, a parent granted a client gets read only, and
+// anyone else gets 404 so record ids cannot be probed.
+app.use('/api/business', requireAuth, businessRouter);
+app.use('/api/clients', requireAuth, clientsRouter);
+app.use('/api/shifts/:shiftId/events', requireAuth, shiftEventsRouter);
+app.use('/api/shifts/:shiftId', requireAuth, reportsRouter);
+app.use('/api/shifts', requireAuth, shiftsRouter);
 app.use('/api/events', requireAuth, eventsRouter);
+app.use('/api/invoices', requireAuth, invoicesRouter);
 app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

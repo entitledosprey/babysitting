@@ -92,30 +92,31 @@ function getTransport() {
   return transport;
 }
 
-const logDelivery = (sessionId, to, subject, status, error = '') => {
+const logDelivery = (shiftId, invoiceId, to, subject, status, error = '') => {
   db.prepare(`
-    INSERT INTO email_log (id, session_id, to_email, subject, status, error, created_at)
-    VALUES (?,?,?,?,?,?,?)
-  `).run(newId(), sessionId ?? null, to, subject, status, String(error).slice(0, 500), nowIso());
+    INSERT INTO email_log (id, shift_id, invoice_id, to_email, subject, status, error, created_at)
+    VALUES (?,?,?,?,?,?,?,?)
+  `).run(newId(), shiftId ?? null, invoiceId ?? null, to, subject, status,
+         String(error).slice(0, 500), nowIso());
 };
 
 /**
  * Sends one message and records the outcome. Never throws: delivery is a
  * side effect of closing out a session and must not fail that request.
  */
-export async function sendMail({ to, subject, text, html, sessionId = null }) {
+export async function sendMail({ to, subject, text, html, shiftId = null, invoiceId = null, attachments }) {
   if (!mailConfigured()) {
-    logDelivery(sessionId, to, subject, 'skipped', 'SMTP is not configured');
+    logDelivery(shiftId, invoiceId, to, subject, 'skipped', 'SMTP is not configured');
     return { ok: false, skipped: true };
   }
   try {
-    await getTransport().sendMail({ from: cfg.from, to, subject, text, html });
-    logDelivery(sessionId, to, subject, 'sent');
+    await getTransport().sendMail({ from: cfg.from, to, subject, text, html, attachments });
+    logDelivery(shiftId, invoiceId, to, subject, 'sent');
     return { ok: true };
   } catch (err) {
     const error = explainMailError(err?.message ?? 'unknown error');
     console.error('[mail] delivery failed to %s: %s', to, error);
-    logDelivery(sessionId, to, subject, 'failed', error);
+    logDelivery(shiftId, invoiceId, to, subject, 'failed', error);
     return { ok: false, error };
   }
 }
