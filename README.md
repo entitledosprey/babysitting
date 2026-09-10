@@ -109,3 +109,29 @@ docker compose cp app:/app/data/backup.db ./backup-$(date +%F).db
 The first person to register creates a family and becomes its parent. Parents
 add children and generate invite codes from family settings; a sitter enters the
 code when creating their account. Codes are single-use and expire after 14 days.
+
+### TLS behind Cloudflare
+
+The hostname is proxied by Cloudflare, so the origin certificate is issued over
+DNS-01 rather than HTTP-01. On the host:
+
+```bash
+sudo apt install python3-certbot-dns-cloudflare
+sudo install -d -m 700 /root/.secrets
+printf 'dns_cloudflare_api_token = %s\n' "$TOKEN" | sudo tee /root/.secrets/cloudflare.ini
+sudo chmod 600 /root/.secrets/cloudflare.ini
+
+sudo certbot certonly --dns-cloudflare \
+  --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
+  -d babysitting.entitledosprey.com
+
+sudo cp nginx/cloudflare-realip.conf /etc/nginx/snippets/
+sudo cp nginx/babysitting.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/babysitting.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+The token needs `Zone:DNS:Edit` on `entitledosprey.com`, and the zone's SSL mode
+must be **Full (strict)** so Cloudflare verifies the origin certificate. Run
+`scripts/update-cloudflare-ips.sh` if Cloudflare ever changes its published
+ranges.
