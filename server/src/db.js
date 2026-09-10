@@ -104,6 +104,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_auth_expiry      ON auth_sessions(expires_at);
 `);
 
+// Records every report email attempt so delivery is visible in the admin
+// console and a failed send can be retried rather than silently lost.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_log (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    to_email   TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    status     TEXT NOT NULL CHECK (status IN ('sent','failed','skipped')),
+    error      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_email_log_time    ON email_log(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_email_log_session ON email_log(session_id);
+`);
+
+// --- Migrations --------------------------------------------------------------
+// Columns added after the first release. CREATE TABLE IF NOT EXISTS above only
+// covers new installs, so existing databases are patched here.
+
+const columnsOf = (table) =>
+  db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+
+const addColumn = (table, name, ddl) => {
+  if (!columnsOf(table).includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+};
+
+addColumn('users', 'disabled', "disabled INTEGER NOT NULL DEFAULT 0");
+addColumn('users', 'last_seen_at', "last_seen_at TEXT");
+addColumn('sessions', 'report_sent_at', "report_sent_at TEXT");
+
 /** Drops expired login sessions and stale unused invites. Called at boot and hourly. */
 export function pruneExpired() {
   const now = new Date().toISOString();

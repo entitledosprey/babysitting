@@ -67,7 +67,7 @@ export function loadUser(req, _res, next) {
     const row = db.prepare(`
       SELECT u.id, u.email, u.name, s.expires_at
         FROM auth_sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ?
+       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0
     `).get(hashToken(token), new Date().toISOString());
     if (row) {
       req.user = { id: row.id, email: row.email, name: row.name };
@@ -105,6 +105,24 @@ export function requireFamily(getFamilyId) {
     req.role = m.role;
     next();
   };
+}
+
+// Admins are named by environment variable, never by a database flag: the role
+// cannot be granted from inside the app, so compromising an account is not
+// enough to become an administrator.
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || '')
+    .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+);
+
+export const isAdmin = (user) => Boolean(user && ADMIN_EMAILS.has(user.email.toLowerCase()));
+
+export const adminCount = () => ADMIN_EMAILS.size;
+
+export function requireAdmin(req, res, next) {
+  // 404 rather than 403 so the admin surface is not discoverable.
+  if (!isAdmin(req.user)) return res.status(404).json({ error: 'Not found' });
+  next();
 }
 
 export function requireParent(req, res, next) {

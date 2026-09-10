@@ -4,7 +4,7 @@ import { db } from '../db.js';
 import {
   hashPassword, verifyPassword, createAuthSession, destroyAuthSession,
   cookieOptions, COOKIE_NAME, requireAuth, newId, nowIso,
-  checkRateLimit, clearRateLimit,
+  checkRateLimit, clearRateLimit, isAdmin,
 } from '../auth.js';
 import { wrap, str, bad, HttpError } from '../http.js';
 
@@ -19,7 +19,7 @@ const familiesFor = (userId) => db.prepare(`
    ORDER BY f.name
 `).all(userId);
 
-const publicUser = (user) => ({ ...user, families: familiesFor(user.id) });
+const publicUser = (user) => ({ ...user, families: familiesFor(user.id), isAdmin: isAdmin(user) });
 
 /**
  * Register. Either creates a brand-new family (caller becomes its parent) or
@@ -90,11 +90,12 @@ router.post('/login', wrap(async (req, res) => {
     throw new HttpError(429, 'Too many sign-in attempts. Try again in a few minutes.');
   }
 
-  const row = db.prepare('SELECT id,email,name,password_hash FROM users WHERE email = ?').get(email);
+  const row = db.prepare('SELECT id,email,name,password_hash,disabled FROM users WHERE email = ?').get(email);
   // Hash even when the user is missing, so a wrong email and a wrong password
   // take the same amount of time.
   const ok = await verifyPassword(password, row?.password_hash ?? (await hashPassword('placeholder')));
   if (!row || !ok) throw new HttpError(401, 'Email or password is incorrect');
+  if (row.disabled) throw new HttpError(403, 'That account has been disabled');
 
   clearRateLimit(key);
   const { token, expires } = createAuthSession(row.id);
@@ -109,6 +110,7 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', requireAuth, (req, res) => {
+  db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(nowIso(), req.user.id);
   res.json({ user: publicUser(req.user) });
 });
 

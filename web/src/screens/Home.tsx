@@ -54,6 +54,9 @@ export function Home() {
           <div className="title">{family?.name ?? 'Sitter Log'}</div>
           <div className="subtitle">Signed in as {user?.name}</div>
         </div>
+        {user?.isAdmin && (
+          <button className="btn ghost" onClick={() => navigate('/admin')} aria-label="Administration">🛠️</button>
+        )}
         <button className="btn ghost" onClick={() => navigate(`/family/${family!.id}`)} aria-label="Family settings">⚙️</button>
         <button className="btn ghost" onClick={() => logout()}>Sign out</button>
       </div>

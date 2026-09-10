@@ -334,3 +334,36 @@ pre.report-text {
   font-size: .86rem; box-shadow: var(--shadow-lg); animation: rise .18s ease;
 }
 @media (prefers-color-scheme: dark) { .toast { background: #eef2f7; color: #12161c; } }
+
+/* ---------- login ---------- */
+/* Centred with `margin:auto` on a flex child rather than `place-items:center`:
+   inside a scrolling container, centred overflow puts the top of the content
+   above the scroll origin, where it cannot be reached. */
+.login-shell {
+  display: flex;
+  padding: 24px 16px calc(24px + var(--safe-bottom));
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  margin: auto;
+}
+
+.login-head { text-align: center; margin-bottom: 22px; }
+.login-head h1 { margin-top: 6px; font-size: 1.5rem; }
+.login-head .muted { margin: 4px 0 0; }
+.login-mark { font-size: 2.75rem; line-height: 1; }
+
+/* Equal-width tabs stop "Have a code" from crowding the active pill. */
+.login-tabs { margin-bottom: 14px; }
+.login-tabs button { flex: 1 1 0; text-align: center; padding: 8px 6px; }
+
+.login-foot { text-align: center; margin-top: 14px; }
+
+@media (max-height: 620px) {
+  /* On a short viewport the header is the first thing worth losing. */
+  .login-mark { font-size: 2rem; }
+  .login-head { margin-bottom: 14px; }
+  .login-head .muted { display: none; }
+}

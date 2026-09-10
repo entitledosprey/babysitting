@@ -28,7 +28,7 @@ jobs:
 
       - name: Run API tests
         working-directory: server
-        run: node --test test/api.test.mjs
+        run: node --test test/api.test.mjs test/admin.test.mjs test/mail.test.mjs
 
       - name: Install web dependencies
         working-directory: web

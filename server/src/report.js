@@ -285,3 +285,137 @@ export function renderReportText(report) {
 
   return L.join('\n');
 }
+
+// --- HTML rendering (email) --------------------------------------------------
+// Deliberately table-and-inline-style based: email clients strip <style> blocks
+// and have no flexbox or grid worth relying on.
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+const C = {
+  text: '#12161c', dim: '#5c6673', faint: '#8b95a3',
+  border: '#e0e4ea', bg: '#f6f7f9', card: '#ffffff', accent: '#4a7fe0',
+};
+
+const row = (when, what) => `
+  <tr>
+    <td style="padding:6px 10px 6px 0;color:${C.dim};font-size:13px;white-space:nowrap;vertical-align:top;width:78px">${esc(when)}</td>
+    <td style="padding:6px 0;font-size:14px;color:${C.text};vertical-align:top">${what}</td>
+  </tr>`;
+
+const section = (title, inner) => `
+  <div style="margin-top:22px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${C.faint};margin-bottom:6px">${esc(title)}</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">${inner}</table>
+  </div>`;
+
+const statTiles = (stats) => `
+  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:10px 0 2px">
+    <tr>${stats.map(([v, k]) => `
+      <td style="background:${C.bg};border:1px solid ${C.border};border-radius:8px;padding:10px 6px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:${C.text}">${esc(v)}</div>
+        <div style="font-size:11px;color:${C.dim};margin-top:2px">${esc(k)}</div>
+      </td>`).join('')}
+    </tr>
+  </table>`;
+
+const noteHtml = (e) => (e.note ? ` <span style="color:${C.dim}">“${esc(e.note)}”</span>` : '');
+
+/** Full HTML report for the end-of-day email. */
+export function renderReportHtml(report, { appUrl = '' } = {}) {
+  const t = fmtTime;
+  const children = report.children.map((entry) => {
+    const { child, sleep, food, diapering, activities, health, observations } = entry;
+    const empty = row('', `<span style="color:${C.dim}">Nothing recorded.</span>`);
+
+    const sleepRows = sleep.naps.length
+      ? sleep.naps.map((n) => row(t(n.at), [
+          n.end ? `until ${esc(t(n.end))}` : 'still asleep',
+          n.minutes != null ? `<strong>${esc(formatDuration(n.minutes))}</strong>` : '',
+          n.fellAsleep ? `<span style="color:${C.dim}">fell asleep ${esc(n.fellAsleep)}</span>` : '',
+          n.moodOnWaking ? `<span style="color:${C.dim}">woke ${esc(n.moodOnWaking)}</span>` : '',
+        ].filter(Boolean).join(' · ') + noteHtml(n))).join('')
+      : empty;
+
+    const foodItems = [
+      ...food.bottles.map((b) => ({ at: b.at, e: b, text: `Bottle${b.amountOz ? ` — ${esc(b.amountOz)} oz` : ''}${b.contents ? ` ${esc(b.contents)}` : ''}` })),
+      ...food.feedings.map((f) => ({ at: f.at, e: f, text: `Meal${f.food ? ` — ${esc(f.food)}` : ''}${f.amountEaten ? ` <span style="color:${C.dim}">(ate ${esc(f.amountEaten)})</span>` : ''}` })),
+      ...food.snacks.map((x) => ({ at: x.at, e: x, text: `Snack${x.food ? ` — ${esc(x.food)}` : ''}` })),
+      ...food.waters.map((w) => ({ at: w.at, e: w, text: `Water${w.amountOz ? ` — ${esc(w.amountOz)} oz` : ''}` })),
+    ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+    const diaperItems = [
+      ...diapering.diapers.map((d) => ({ at: d.at, e: d, text: ([d.wet && 'wet', d.dirty && 'dirty'].filter(Boolean).join(' + ') || 'dry') + (d.rash ? ` <span style="color:${C.dim}">· rash noted</span>` : '') })),
+      ...diapering.pottyTrips.map((x) => ({ at: x.at, e: x, text: `Potty — ${[x.pee && 'pee', x.poop && 'poop'].filter(Boolean).join(' + ') || 'tried'}${x.accident ? ' <span style="color:#b91c1c">· accident</span>' : ''}` })),
+    ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+    const activityItems = [
+      ...activities.items.map((a) => ({ at: a.at, e: a, text: `${esc(a.kind ?? 'Activity')}${a.minutes ? ` <span style="color:${C.dim}">· ${esc(formatDuration(a.minutes))}</span>` : ''}` })),
+      ...activities.baths.map((b) => ({ at: b.at, e: b, text: 'Bath' })),
+      ...activities.quiet.map((q) => ({ at: q.at, e: q, text: `Quiet time${q.minutes ? ` <span style="color:${C.dim}">· ${esc(formatDuration(q.minutes))}</span>` : ''}` })),
+      ...activities.screenTime.map((x) => ({ at: x.at, e: x, text: `Screen time${x.minutes ? ` <span style="color:${C.dim}">· ${esc(formatDuration(x.minutes))}</span>` : ''}` })),
+    ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+    const healthRows = [
+      ...health.medications.map((m) => row(t(m.at), `💊 ${esc(m.name ?? 'Medication')}${m.dose ? ` — ${esc(m.dose)}` : ''}${noteHtml(m)}`)),
+      ...health.incidents.map((x) => row(t(x.at), `🚨 <strong style="color:#b91c1c">Incident${x.severity ? ` (${esc(x.severity)})` : ''}</strong>${x.note ? ` — ${esc(x.note)}` : ''}${x.actionTaken ? `<br><span style="color:${C.dim}">Action taken: ${esc(x.actionTaken)}</span>` : ''}${x.parentNotified ? `<br><span style="color:${C.dim}">You were notified at the time.</span>` : ''}`)),
+    ].join('');
+
+    const obsRows = [
+      ...observations.milestones.map((m) => row(t(m.at), `⭐ ${m.kind ? `<strong>${esc(m.kind)}:</strong> ` : ''}${esc(m.note)}`)),
+      ...observations.notes.map((n) => row(t(n.at), esc(n.note))),
+    ].join('');
+
+    return `
+    <div style="background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:18px;margin-top:14px">
+      <h2 style="margin:0;font-size:19px;color:${C.text}">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${esc(child.colour || C.accent)}"></span>
+        ${esc(child.name)}
+      </h2>
+
+      ${statTiles([
+        [String(sleep.napCount), sleep.napCount === 1 ? 'nap' : 'naps'],
+        [formatDuration(sleep.totalMinutes) || '—', 'total sleep'],
+        [String(food.bottleCount + food.mealCount + food.snackCount), 'food items'],
+        [String(diapering.total + diapering.pottyCount), 'changes'],
+      ])}
+
+      ${section('Sleep', sleepRows)}
+      ${section('Food & drink', foodItems.length ? foodItems.map((i) => row(t(i.at), i.text + noteHtml(i.e))).join('') : empty)}
+      ${section('Diapers & potty', diaperItems.length ? diaperItems.map((i) => row(t(i.at), i.text + noteHtml(i.e))).join('') : empty)}
+      ${section('Activities', activityItems.length ? activityItems.map((i) => row(t(i.at), i.text + noteHtml(i.e))).join('') : empty)}
+      ${healthRows ? section('Health', healthRows) : ''}
+      ${obsRows ? section('Observations', obsRows) : ''}
+    </div>`;
+  }).join('');
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Daily Childcare Report</title></head>
+<body style="margin:0;padding:20px 12px;background:${C.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${C.text}">
+  <div style="max-width:620px;margin:0 auto">
+    <div style="background:${C.card};border:1px solid ${C.border};border-radius:12px;padding:18px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${C.accent}">Daily Childcare Report</div>
+      <h1 style="margin:6px 0 2px;font-size:22px">${esc(report.session.familyName)}</h1>
+      <div style="color:${C.dim};font-size:14px">${esc(fmtDate(report.session.startedAt))}</div>
+      <div style="color:${C.dim};font-size:14px;margin-top:4px">
+        ${esc(t(report.session.startedAt))}${report.session.endedAt ? ` – ${esc(t(report.session.endedAt))}` : ''}
+        ${report.session.durationMinutes != null ? ` · ${esc(formatDuration(report.session.durationMinutes))}` : ''}
+      </div>
+      ${report.session.sitterName ? `<div style="color:${C.faint};font-size:13px;margin-top:4px">Caregiver: ${esc(report.session.sitterName)}</div>` : ''}
+      ${report.session.notes ? `<p style="margin:12px 0 0;font-size:14px;padding:10px;background:${C.bg};border-radius:8px">${esc(report.session.notes)}</p>` : ''}
+    </div>
+
+    ${children}
+
+    ${appUrl ? `<p style="text-align:center;margin:20px 0 0">
+      <a href="${esc(appUrl)}" style="color:${C.accent};font-size:13px;text-decoration:none">Open the full log →</a>
+    </p>` : ''}
+    <p style="text-align:center;color:${C.faint};font-size:11px;margin-top:14px">
+      Sent automatically when the session was closed out.
+    </p>
+  </div>
+</body></html>`;
+}

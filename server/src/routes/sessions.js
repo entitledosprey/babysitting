@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { newId, nowIso } from '../auth.js';
 import { wrap, str, bad, isoTimestamp, isoDate, HttpError } from '../http.js';
 import { loadSession, childrenOf, eventsOf, mapEvent, mapSession } from '../access.js';
+import { sendSessionReport } from '../report-email.js';
 
 /** Mounted at /api/families/:familyId/sessions — list and create. */
 export const familyRouter = Router({ mergeParams: true });
@@ -131,6 +132,12 @@ router.post('/:sessionId/end', wrap(async (req, res) => {
   }
 
   const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id);
+
+  // Mail the report to the family's parents. Deliberately not awaited: SMTP can
+  // be slow or down, and closing out a session must not depend on it. Failures
+  // are recorded in email_log and can be resent from the admin console.
+  sendSessionReport(s).catch((err) => console.error('[mail] report send failed', err));
+
   res.json({ session: { ...mapSession(s), children: childrenOf(s.id), events: eventsOf(s.id).map(mapEvent) } });
 }));
 

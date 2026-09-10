@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { pruneExpired } from './db.js';
-import { loadUser, requireAuth, requireFamily } from './auth.js';
+import { loadUser, requireAuth, requireFamily, requireAdmin } from './auth.js';
 import { HttpError } from './http.js';
 import { EVENT_TYPES } from './types.js';
 
@@ -14,6 +14,7 @@ import { router as familiesRouter } from './routes/families.js';
 import { familyRouter as familySessionsRouter, router as sessionsRouter } from './routes/sessions.js';
 import { sessionRouter as sessionEventsRouter, router as eventsRouter } from './routes/events.js';
 import { router as reportsRouter } from './routes/reports.js';
+import { router as adminRouter } from './routes/admin.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +46,7 @@ app.use('/api/sessions/:sessionId/events', requireAuth, sessionEventsRouter);
 app.use('/api/sessions/:sessionId', requireAuth, reportsRouter);
 app.use('/api/sessions', requireAuth, sessionsRouter);
 app.use('/api/events', requireAuth, eventsRouter);
+app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 

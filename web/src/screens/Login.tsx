@@ -31,15 +31,15 @@ export function Login() {
 
   return (
     <div className="app">
-      <div className="content pad" style={{ display: 'grid', placeItems: 'center' }}>
-        <div style={{ width: '100%', maxWidth: 400 }}>
-          <div style={{ textAlign: 'center', marginBottom: 26 }}>
-            <div style={{ fontSize: '3rem' }}>🧸</div>
-            <h1 style={{ marginTop: 8 }}>Sitter Log</h1>
+      <div className="content login-shell">
+        <div className="login-card">
+          <div className="login-head">
+            <div className="login-mark">🧸</div>
+            <h1>Sitter Log</h1>
             <p className="muted">Everything that happened today, in one place.</p>
           </div>
 
-          <div className="seg" style={{ marginBottom: 16 }}>
+          <div className="seg login-tabs">
             <button aria-pressed={mode === 'signin'} onClick={() => setMode('signin')}>Sign in</button>
             <button aria-pressed={mode === 'create'} onClick={() => setMode('create')}>New family</button>
             <button aria-pressed={mode === 'invite'} onClick={() => setMode('invite')}>Have a code</button>
@@ -90,7 +90,7 @@ export function Login() {
             </button>
           </form>
 
-          <p className="faint" style={{ textAlign: 'center', marginTop: 14 }}>
+          <p className="faint login-foot">
             {mode === 'invite'
               ? 'A parent can generate a code for you from their family settings.'
               : 'Sitters join an existing family with an invite code.'}

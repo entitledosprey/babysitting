@@ -17,6 +17,10 @@ of the session.
   observations, per child, viewable in the app or shareable as plain text.
 - **Multiple families and children** — a user can belong to several families;
   parents manage the roster and invite sitters with a one-time code.
+- **The report is emailed automatically** when a session is closed out, to every
+  parent in the family. Delivery is logged and can be retried.
+- **Admin console** at `/admin` — accounts, families, sessions, email delivery
+  and database maintenance.
 
 ## Stack
 
@@ -57,14 +61,24 @@ session cookie is marked `Secure` and the browser will drop it.
 ### Tests
 
 ```bash
-cd server && node --test test/api.test.mjs
+cd server && node --test test/api.test.mjs test/admin.test.mjs test/mail.test.mjs
 ```
 
-The suite covers the event and report logic and, deliberately, the multi-tenant
-boundary — a user in one family must get a 404 on every read and write path
-belonging to another.
+41 tests across three suites:
+
+- **api** — event and report logic, and deliberately the multi-tenant boundary: a
+  user in one family must get a 404 on every read and write path belonging to
+  another.
+- **admin** — the admin gate is invisible to ordinary users, disabling revokes
+  live sessions, password resets invalidate old ones, destructive actions are
+  guarded.
+- **mail** — runs a real in-process SMTP server and asserts that closing a
+  session delivers a multipart message to the parent and not the sitter, with
+  the child's entries present in both the text and HTML parts.
 
 ## Configuration
+
+Copy `.env.example` to `.env` beside `docker-compose.yml` and fill it in.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -72,6 +86,39 @@ belonging to another.
 | `DB_PATH` | `./data/babysitting.db` | SQLite file; `:memory:` for throwaway runs |
 | `STATIC_DIR` | `../public` relative to `src/` | Built frontend; API-only if absent |
 | `SECURE_COOKIES` | `true` | Set `false` for plain-HTTP local use |
+| `ADMIN_EMAILS` | *(empty)* | Comma-separated emails granted the admin console |
+| `APP_BASE_URL` | *(empty)* | Link target in report emails |
+| `SMTP_HOST` | *(empty)* | Empty disables sending; the app degrades gracefully |
+| `SMTP_PORT` | `587` | `587` STARTTLS, `465` implicit TLS |
+| `SMTP_SECURE` | `false` | `true` only for port 465 |
+| `SMTP_USER` / `SMTP_PASS` | *(empty)* | Omit both for an unauthenticated relay |
+| `SMTP_FROM` | *(empty)* | Envelope sender; required for sending |
+
+## Administration
+
+`ADMIN_EMAILS` grants the console at `/admin`. The role is **not** a database
+flag — it cannot be granted from inside the app, so taking over an account is not
+enough to become an administrator. Non-admins get a 404 on every admin route, so
+the surface is not discoverable.
+
+The console covers an overview (counts, database size, uptime, mail status,
+recent delivery failures), user search with password reset, disable and delete,
+family inspection with a confirm-by-name delete, session listing with report
+resend, the email delivery log, and maintenance actions (backup, vacuum, prune).
+
+Disabling an account revokes its live sessions immediately rather than waiting
+for the token to expire. Deleting the only parent of a family is refused unless
+forced, so families are not silently orphaned.
+
+## Report emails
+
+When a sitter closes out a session, the report is rendered as text and HTML and
+emailed to every parent in that family. Sitters are not recipients.
+
+The send is fired without being awaited: SMTP can be slow or down, and closing a
+session must not depend on it. Every attempt is written to `email_log` as `sent`,
+`failed` or `skipped`, so nothing is lost silently and the admin console can
+retry. With `SMTP_HOST` unset the app runs normally and records `skipped`.
 
 ## Deployment
 

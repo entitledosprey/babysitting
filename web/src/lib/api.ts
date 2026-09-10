@@ -1,5 +1,5 @@
 export interface Family { id: string; name: string; role: 'parent' | 'sitter'; childCount?: number }
-export interface User { id: string; email: string; name: string; families: Family[] }
+export interface User { id: string; email: string; name: string; families: Family[]; isAdmin: boolean }
 export interface Child { id: string; name: string; birthdate: string | null; colour: string; notes: string; archived: boolean }
 export interface SessionChild { id: string; name: string; colour: string; birthdate: string | null }
 
@@ -165,4 +165,87 @@ export interface Report {
   };
   children: ChildReport[];
   generatedAt: string;
+}
+
+// --- Admin -------------------------------------------------------------------
+
+export const admin = {
+  overview: () => get<AdminOverview>('/api/admin/overview'),
+  users: (q = '') => get<{ users: AdminUser[] }>(`/api/admin/users?q=${encodeURIComponent(q)}`).then((r) => r.users),
+  updateUser: (id: string, input: { disabled?: boolean; name?: string }) =>
+    patch<{ user: AdminUser }>(`/api/admin/users/${id}`, input).then((r) => r.user),
+  resetPassword: (id: string, newPassword: string) =>
+    post<{ ok: true }>(`/api/admin/users/${id}/password`, { newPassword }),
+  deleteUser: (id: string, force = false) =>
+    del<{ ok: true }>(`/api/admin/users/${id}${force ? '?force=true' : ''}`),
+
+  families: () => get<{ families: AdminFamily[] }>('/api/admin/families').then((r) => r.families),
+  family: (id: string) => get<{ family: AdminFamilyDetail }>(`/api/admin/families/${id}`).then((r) => r.family),
+  deleteFamily: (id: string, confirmName: string) =>
+    request<{ ok: true }>('DELETE', `/api/admin/families/${id}`, { confirmName }),
+
+  sessions: (familyId?: string) =>
+    get<{ sessions: AdminSession[] }>(`/api/admin/sessions${familyId ? `?familyId=${familyId}` : ''}`).then((r) => r.sessions),
+  resendReport: (sessionId: string) =>
+    post<{ result: SendResult }>(`/api/admin/sessions/${sessionId}/resend-report`).then((r) => r.result),
+
+  emailLog: (status = '') =>
+    get<{ entries: EmailLogEntry[] }>(`/api/admin/email-log${status ? `?status=${status}` : ''}`).then((r) => r.entries),
+  verifyMail: () => post<{ result: { ok: boolean; error?: string } }>('/api/admin/mail/verify').then((r) => r.result),
+  testMail: (to: string) =>
+    post<{ result: { ok: boolean; error?: string; skipped?: boolean } }>('/api/admin/mail/test', { to }).then((r) => r.result),
+
+  vacuum: () => post<{ beforeBytes: number; afterBytes: number }>('/api/admin/maintenance/vacuum'),
+  backup: () => post<{ path: string; bytes: number }>('/api/admin/maintenance/backup'),
+  prune: () => post<{ expiredLogins: number; expiredInvites: number; oldEmailLogs: number }>('/api/admin/maintenance/prune'),
+};
+
+export interface AdminOverview {
+  counts: {
+    users: number; disabled: number; families: number; children: number;
+    sessions: number; open: number; events: number; invites: number; logins: number;
+  };
+  storage: { dbBytes: number; walBytes: number; path: string };
+  mail: {
+    configured: boolean; host: string; port: number; secure: boolean; from: string;
+    authenticated: boolean; adminCount: number;
+    recentFailures: { to_email: string; subject: string; error: string; created_at: string }[];
+  };
+  runtime: { uptimeSeconds: number; node: string; rssBytes: number; now: string };
+  activity: { last7Days: { date: string; sessions: number }[] };
+}
+
+export interface AdminUser {
+  id: string; email: string; name: string; disabled: boolean;
+  createdAt: string; lastSeenAt: string | null;
+  families: { id: string; name: string; role: string }[];
+}
+
+export interface AdminFamily {
+  id: string; name: string; createdAt: string;
+  members: number; children: number; sessions: number;
+}
+
+export interface AdminFamilyDetail {
+  id: string; name: string; createdAt: string;
+  members: { id: string; name: string; email: string; role: string; disabled: number }[];
+  children: { id: string; name: string; colour: string; archived: number }[];
+  sessions: { id: string; date: string; startedAt: string; endedAt: string | null; reportSentAt: string | null; events: number }[];
+  recipients: { email: string; name: string }[];
+}
+
+export interface AdminSession {
+  id: string; familyId: string; familyName: string; sitterName: string;
+  date: string; startedAt: string; endedAt: string | null;
+  reportSentAt: string | null; events: number;
+}
+
+export interface EmailLogEntry {
+  id: string; sessionId: string | null; to: string; subject: string;
+  status: 'sent' | 'failed' | 'skipped'; error: string; createdAt: string;
+}
+
+export interface SendResult {
+  sent: number; configured?: boolean;
+  results: { email: string; ok: boolean; error?: string; skipped?: boolean }[];
 }

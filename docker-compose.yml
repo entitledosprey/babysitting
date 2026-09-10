@@ -15,6 +15,11 @@ services:
       DB_PATH: /app/data/babysitting.db
       # The edge proxy terminates TLS, so session cookies are marked Secure.
       SECURE_COOKIES: "true"
+    # SMTP credentials and ADMIN_EMAILS live here; see .env.example. Marked
+    # optional so the stack still starts on a host that has not configured mail.
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - babysitting-data:/app/data
     networks:
