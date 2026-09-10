@@ -75,33 +75,88 @@ belonging to another.
 
 ## Deployment
 
-The image is built and published by GitHub Actions to
-`ghcr.io/entitledosprey/babysitting` for `linux/amd64` and `linux/arm64` on every
-push to `main`.
+Live at **https://babysitting.entitledosprey.com**.
 
-On the host:
+GitHub Actions builds and publishes `ghcr.io/entitledosprey/babysitting` for
+`linux/amd64` and `linux/arm64` on every push to `main`. The package is public;
+the repository is private.
+
+### Topology
+
+The deployment host already runs an nginx container that owns `:80` and `:443`
+for another site. Rather than fight over the ports, this app joins that
+container's Docker network and is reached by container name:
+
+```
+Cloudflare (proxied, Full strict)
+  └─ :443  calorie-app-nginx-1          shared edge proxy
+       ├─ calories.entitledosprey.com   → app:8000
+       └─ babysitting.entitledosprey.com
+            └─ http://babysitting:8080  over calorie-app_default
+                 └─ SQLite at /app/data (babysitting-data volume)
+```
+
+The compose service is deliberately named `babysitting` rather than `app`: the
+service name becomes a DNS alias on the shared network, and `app` is already
+taken there.
+
+### Updating
 
 ```bash
+cd /opt/babysitting
 docker compose pull && docker compose up -d
 ```
 
-The container binds to `127.0.0.1:8080` only; nginx terminates TLS in front of
-it. Install the vhost and issue the certificate:
+### First-time setup on the host
 
 ```bash
-sudo cp nginx/babysitting.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/babysitting.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d babysitting.entitledosprey.com
+# 1. Certificate, issued over DNS-01 because the hostname is proxied by
+#    Cloudflare and HTTP-01 cannot reach the origin.
+sudo apt install python3-certbot-dns-cloudflare
+sudo install -d -m 700 /root/.secrets
+printf 'dns_cloudflare_api_token = %s\n' "$TOKEN" | sudo tee /root/.secrets/cloudflare.ini
+sudo chmod 600 /root/.secrets/cloudflare.ini
+sudo certbot certonly --dns-cloudflare \
+  --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
+  --dns-cloudflare-propagation-seconds 30 \
+  -d babysitting.entitledosprey.com
+
+# 2. Renewal hook: republishes the cert into the edge proxy's volume and
+#    reloads it. certbot's live/ entries are symlinks into archive/, which is
+#    not present inside that volume, so the hook dereferences them.
+sudo cp nginx/babysitting-certs-hook.sh \
+  /etc/letsencrypt/renewal-hooks/deploy/babysitting-certs.sh
+sudo chmod 755 /etc/letsencrypt/renewal-hooks/deploy/babysitting-certs.sh
+sudo RENEWED_LINEAGE=/etc/letsencrypt/live/babysitting.entitledosprey.com \
+  /etc/letsencrypt/renewal-hooks/deploy/babysitting-certs.sh
+
+# 3. Server block, appended to the edge proxy's config.
+cat nginx/babysitting.conf >> /home/ubuntu/calorie-app/nginx/nginx.conf
+docker exec calorie-app-nginx-1 nginx -t
+docker exec calorie-app-nginx-1 nginx -s reload
+
+# 4. The app itself.
+cd /opt/babysitting && docker compose up -d
 ```
 
-Data lives in the `babysitting-data` volume. To back it up:
+The zone's SSL/TLS mode must be **Full (strict)** — the server block redirects
+`:80` to `:443`, so Flexible mode would produce a redirect loop.
+
+`nginx/babysitting.conf` inlines Cloudflare's IP ranges and reads
+`CF-Connecting-IP`, scoped to that server block so the neighbouring site is
+unaffected. Without it every visitor shares one address and the login rate
+limiter collapses into a single global bucket. Re-run
+`scripts/update-cloudflare-ips.sh` if Cloudflare changes its published ranges.
+
+### Backups
+
+Data lives in the `babysitting-data` volume:
 
 ```bash
-docker compose exec app node -e "
+docker compose exec babysitting node -e "
   const {DatabaseSync}=require('node:sqlite');
   new DatabaseSync(process.env.DB_PATH).exec(\"VACUUM INTO '/app/data/backup.db'\")"
-docker compose cp app:/app/data/backup.db ./backup-$(date +%F).db
+docker compose cp babysitting:/app/data/backup.db ./backup-$(date +%F).db
 ```
 
 ## Accounts
@@ -109,29 +164,3 @@ docker compose cp app:/app/data/backup.db ./backup-$(date +%F).db
 The first person to register creates a family and becomes its parent. Parents
 add children and generate invite codes from family settings; a sitter enters the
 code when creating their account. Codes are single-use and expire after 14 days.
-
-### TLS behind Cloudflare
-
-The hostname is proxied by Cloudflare, so the origin certificate is issued over
-DNS-01 rather than HTTP-01. On the host:
-
-```bash
-sudo apt install python3-certbot-dns-cloudflare
-sudo install -d -m 700 /root/.secrets
-printf 'dns_cloudflare_api_token = %s\n' "$TOKEN" | sudo tee /root/.secrets/cloudflare.ini
-sudo chmod 600 /root/.secrets/cloudflare.ini
-
-sudo certbot certonly --dns-cloudflare \
-  --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
-  -d babysitting.entitledosprey.com
-
-sudo cp nginx/cloudflare-realip.conf /etc/nginx/snippets/
-sudo cp nginx/babysitting.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/babysitting.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-The token needs `Zone:DNS:Edit` on `entitledosprey.com`, and the zone's SSL mode
-must be **Full (strict)** so Cloudflare verifies the origin certificate. Run
-`scripts/update-cloudflare-ips.sh` if Cloudflare ever changes its published
-ranges.
