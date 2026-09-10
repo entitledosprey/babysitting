@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { navigate } from '../lib/router';
 import { ErrorNote, Field } from '../components/ui';
 
 /**
@@ -71,6 +72,12 @@ export function Onboarding() {
           </div>
 
           <ErrorNote error={error} />
+
+          {user?.isAdmin && (
+            <button className="btn block" style={{ marginTop: 14 }} onClick={() => navigate('/admin')}>
+              🛠️ Platform administration
+            </button>
+          )}
 
           <button className="btn ghost block" style={{ marginTop: 14 }} onClick={() => logout()}>
             Sign out
