@@ -367,3 +367,68 @@ pre.report-text {
   .login-head { margin-bottom: 14px; }
   .login-head .muted { display: none; }
 }
+
+/* ---------- bottom navigation ---------- */
+.tabbar {
+  display: flex; align-items: stretch;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  padding-bottom: var(--safe-bottom);
+}
+.tabbar button {
+  flex: 1; border: none; background: none; padding: 9px 4px 7px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: var(--text-faint); font-size: .67rem; font-weight: 600;
+}
+.tabbar button .ic { font-size: 1.25rem; line-height: 1; }
+.tabbar button[aria-current="page"] { color: var(--accent); }
+.tabbar button:active { opacity: .6; }
+
+/* ---------- status pills ---------- */
+.pill {
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface-2); color: var(--text-dim);
+}
+.pill.live      { background: var(--accent); color: #fff; }
+.pill.scheduled { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--accent); }
+.pill.done      { background: color-mix(in srgb, var(--ok) 18%, var(--surface)); color: var(--ok); }
+.pill.cancelled { background: var(--surface-2); color: var(--text-faint); text-decoration: line-through; }
+.pill.draft     { background: color-mix(in srgb, #d4a017 20%, var(--surface)); color: #a37c0d; }
+.pill.paid      { background: color-mix(in srgb, var(--ok) 18%, var(--surface)); color: var(--ok); }
+.pill.void      { background: var(--surface-2); color: var(--text-faint); }
+
+/* ---------- money ---------- */
+.amount { font-variant-numeric: tabular-nums; font-weight: 650; }
+.amount.big { font-size: 1.5rem; }
+
+/* ---------- care profile callouts ---------- */
+.callout {
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: .88rem;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.callout.alert {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+.callout .k {
+  font-size: .68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-faint); margin-bottom: 3px;
+}
+
+/* ---------- simple list rows ---------- */
+.rowcard {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 13px; box-shadow: var(--shadow);
+}
+.rowcard:active { background: var(--surface-2); }
+.rowcard .main { flex: 1; min-width: 0; }
+.rowcard .main strong { display: block; }
+.avatar {
+  width: 38px; height: 38px; border-radius: 11px; flex: none;
+  display: grid; place-items: center; font-weight: 700; font-size: .95rem;
+  background: color-mix(in srgb, var(--c, var(--accent)) 18%, var(--surface));
+  color: var(--c, var(--accent));
+}

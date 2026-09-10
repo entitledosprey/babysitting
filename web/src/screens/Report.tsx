@@ -159,21 +159,21 @@ function ChildSection({ entry }: { entry: ChildReport }) {
   );
 }
 
-export function Report({ sessionId }: { sessionId: string }) {
+export function Report({ shiftId }: { shiftId: string }) {
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [raw, setRaw] = useState<string | null>(null);
   const [toast, showToast] = useToast();
 
   useEffect(() => {
-    api.report(sessionId).then(setReport).catch((e) => setError(e.message));
-  }, [sessionId]);
+    api.report(shiftId).then(setReport).catch((e) => setError(e.message));
+  }, [shiftId]);
 
   if (error) return <div className="pad"><ErrorNote error={error} /></div>;
   if (!report) return <Spinner />;
 
   const share = async () => {
-    const text = await api.reportText(sessionId);
+    const text = await api.reportText(shiftId);
     if (navigator.share) {
       try {
         await navigator.share({ title: 'Daily Childcare Report', text });
@@ -192,25 +192,31 @@ export function Report({ sessionId }: { sessionId: string }) {
   return (
     <div className="app">
       <div className="appbar">
-        <button className="btn ghost" onClick={() => navigate(`/session/${sessionId}`)} aria-label="Back">‹</button>
+        <button className="btn ghost" onClick={() => navigate(`/shift/${shiftId}`)} aria-label="Back">‹</button>
         <div className="grow">
           <div className="title">Daily report</div>
-          <div className="subtitle">{fmtDate(report.session.startedAt)}</div>
+          <div className="subtitle">{fmtDate(report.shift.startedAt)}</div>
         </div>
         <button className="btn sm" onClick={share}>Share</button>
       </div>
 
       <div className="content pad pad-bottom report">
         <div className="card">
-          <h2>{report.session.familyName}</h2>
+          <h2>{report.shift.clientName}</h2>
           <div className="muted">
-            {fmtTime(report.session.startedAt)}
-            {report.session.endedAt ? ` – ${fmtTime(report.session.endedAt)}` : ' – in progress'}
-            {report.session.durationMinutes != null && ` · ${fmtDuration(report.session.durationMinutes)}`}
+            {fmtTime(report.shift.startedAt)}
+            {report.shift.endedAt ? ` – ${fmtTime(report.shift.endedAt)}` : ' – in progress'}
+            {report.shift.durationMinutes != null && ` · ${fmtDuration(report.shift.durationMinutes)}`}
           </div>
-          {report.session.sitterName && <div className="faint">Caregiver: {report.session.sitterName}</div>}
-          {report.session.notes && (
-            <p style={{ marginBottom: 0, marginTop: 10 }}>{report.session.notes}</p>
+          {report.shift.sitterName && <div className="faint">Caregiver: {report.shift.sitterName}</div>}
+          {report.shift.businessName && <div className="faint">{report.shift.businessName}</div>}
+          {report.shift.parentNotes && (
+            <div className="callout" style={{ marginTop: 10 }}>
+              <div className="k">From the parents</div>{report.shift.parentNotes}
+            </div>
+          )}
+          {report.shift.notes && (
+            <p style={{ marginBottom: 0, marginTop: 10 }}>{report.shift.notes}</p>
           )}
         </div>
 
@@ -224,7 +230,7 @@ export function Report({ sessionId }: { sessionId: string }) {
         )}
 
         <button className="btn block" style={{ marginTop: 16 }}
-          onClick={async () => setRaw(raw ? null : await api.reportText(sessionId))}>
+          onClick={async () => setRaw(raw ? null : await api.reportText(shiftId))}>
           {raw ? 'Hide plain text' : 'Show as plain text'}
         </button>
       </div>

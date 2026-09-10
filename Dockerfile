@@ -16,6 +16,8 @@ COPY server/package.json server/package-lock.json server/
 RUN cd server && npm ci --omit=dev --no-audit --no-fund
 
 COPY server/src server/src
+# Maintenance scripts (schema migrations) must be runnable inside the container.
+COPY server/scripts server/scripts
 
 FROM node:${NODE_VERSION} AS runtime
 ENV NODE_ENV=production \
@@ -28,6 +30,7 @@ RUN addgroup -S app && adduser -S -G app app \
 
 COPY --from=builder --chown=app:app /build/server/node_modules ./node_modules
 COPY --from=builder --chown=app:app /build/server/src          ./src
+COPY --from=builder --chown=app:app /build/server/scripts      ./scripts
 COPY --from=builder --chown=app:app /build/server/public       ./public
 COPY --chown=app:app server/package.json                       ./package.json
 

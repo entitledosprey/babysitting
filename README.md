@@ -1,10 +1,15 @@
 # Sitter Log
 
-A childcare logging app built around an hourly timeline. A sitter logs feedings,
-naps, diapers, activities and observations in a couple of taps while holding a
-child, and the app produces a Daily Childcare Report for the parents at the end
-of the session.
+Software for running a babysitting business. A sitter sets up the families they
+work for, logs each shift on an hourly timeline, and the app emails the parents a
+professional daily report the moment the shift is closed out.
 
+- **Your clients** — a roster of the families you sit for, each with children,
+  contacts, and a care profile: allergies, medical notes, routines, house rules,
+  Wi-Fi, who may collect.
+- **Shifts** — book ahead, start on arrival, log the day, close out. Scheduled →
+  in progress → completed, with the status derived from the timestamps so the two
+  can never disagree.
 - **Hourly timeline** — colour-coded blocks, point-in-time entries and duration
   blocks side by side, a live "now" line, and overlapping entries laid out in
   lanes.
@@ -13,13 +18,16 @@ of the session.
 - **16 entry types** — feeding, bottle, snack, water, diaper, potty, nap,
   medication, activity, bath, photo, note, incident, quiet time, screen time and
   milestones.
-- **End-of-day report** — sleep, food, diapers and potty, activities, health and
-  observations, per child, viewable in the app or shareable as plain text.
-- **Multiple families and children** — a user can belong to several families;
-  parents manage the roster and invite sitters with a one-time code.
-- **The report is emailed automatically** when a session is closed out, to every
-  parent in the family. Delivery is logged and can be retried.
-- **Admin console** at `/admin` — accounts, families, sessions, email delivery
+- **Daily report, emailed automatically** — per child: sleep, food, diapers and
+  potty, activities, health and observations. Sent to the contacts you flag,
+  every time a shift ends.
+- **Hours and invoicing** — billable hours come from actual logged shift
+  durations at the client's rate, with a preview, line items, and an emailed
+  invoice.
+- **Parent portal** — parents can be given a read-only login to their own
+  family's shifts and reports. They can see everything about their family and
+  change nothing.
+- **Admin console** at `/admin` — accounts, businesses, shifts, email delivery
   and database maintenance.
 
 ## Stack
@@ -66,14 +74,15 @@ cd server && node --test test/*.test.mjs
 
 49 tests across four suites:
 
-- **api** — event and report logic, and deliberately the multi-tenant boundary: a
-  user in one family must get a 404 on every read and write path belonging to
-  another.
+- **api** — the shift lifecycle, report totals, invoicing maths, and
+  deliberately the two access boundaries: a rival sitter gets 404 on every read
+  and write path of another business, and a parent gets 403 on every write to
+  their own family.
 - **admin** — the admin gate is invisible to ordinary users, disabling revokes
   live sessions, password resets invalidate old ones, destructive actions are
   guarded.
-- **mail** — runs a real in-process SMTP server and asserts that closing a
-  session delivers a multipart message to the parent and not the sitter, with
+- **mail** — runs a real in-process SMTP server and asserts that closing a shift
+  delivers a multipart message to the opted-in contact and to nobody else, with
   the child's entries present in both the text and HTML parts.
 - **mail-config** — the port/TLS pairing. Port 465 is forced secure regardless
   of `SMTP_SECURE`, mismatches are reported in the admin console, and opaque
@@ -106,20 +115,23 @@ the surface is not discoverable.
 
 The console covers an overview (counts, database size, uptime, mail status,
 recent delivery failures), user search with password reset, disable and delete,
-family inspection with a confirm-by-name delete, session listing with report
+business inspection with a confirm-by-name delete, shift listing with report
 resend, the email delivery log, and maintenance actions (backup, vacuum, prune).
 
 Disabling an account revokes its live sessions immediately rather than waiting
-for the token to expire. Deleting the only parent of a family is refused unless
-forced, so families are not silently orphaned.
+for the token to expire. Deleting a sitter is refused unless forced, because it
+cascades to their whole business — the refusal names how many clients and shifts
+would go with them.
 
 ## Report emails
 
-When a sitter closes out a session, the report is rendered as text and HTML and
-emailed to every parent in that family. Sitters are not recipients.
+When a sitter closes out a shift, the report is rendered as text and HTML and
+emailed to every contact on that client flagged `receivesReports`. Contacts are
+records the sitter maintains, so this works whether or not the parents ever
+create a portal login.
 
 The send is fired without being awaited: SMTP can be slow or down, and closing a
-session must not depend on it. Every attempt is written to `email_log` as `sent`,
+shift must not depend on it. Every attempt is written to `email_log` as `sent`,
 `failed` or `skipped`, so nothing is lost silently and the admin console can
 retry. With `SMTP_HOST` unset the app runs normally and records `skipped`.
 
@@ -211,6 +223,24 @@ docker compose cp babysitting:/app/data/backup.db ./backup-$(date +%F).db
 
 ## Accounts
 
-The first person to register creates a family and becomes its parent. Parents
-add children and generate invite codes from family settings; a sitter enters the
-code when creating their account. Codes are single-use and expire after 14 days.
+A sitter registers with a business name and owns everything under it. Parents do
+not need accounts at all — they are contacts on a client, and reports reach them
+by email. A sitter who wants to give parents a read-only login generates an
+invite code from the client's People tab; codes are single-use and expire after
+21 days.
+
+Platform admins are named by `ADMIN_EMAILS` and may register without a business.
+
+### Migrating from the family-rooted schema
+
+The first release rooted everything at a family that parents owned. There is no
+meaningful mapping from that to a business a sitter owns, so the migration keeps
+logins and drops the domain data:
+
+```bash
+docker compose exec app node scripts/migrate-to-business.mjs        # dry run
+docker compose exec app node scripts/migrate-to-business.mjs --yes  # do it
+```
+
+It writes a timestamped backup first. The app refuses to start against an
+unmigrated database rather than running with a half-matching schema.

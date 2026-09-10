@@ -1,38 +1,107 @@
-export interface Family { id: string; name: string; role: 'parent' | 'sitter'; childCount?: number }
-export interface User { id: string; email: string; name: string; families: Family[]; isAdmin: boolean }
-export interface Child { id: string; name: string; birthdate: string | null; colour: string; notes: string; archived: boolean }
-export interface SessionChild { id: string; name: string; colour: string; birthdate: string | null }
+// --- Core shapes -------------------------------------------------------------
+
+export interface Business {
+  id: string; name: string; defaultRateCents: number; currency: string;
+  createdAt?: string;
+  stats?: { clients: number; shifts: number; upcoming: number };
+}
+
+export interface ParentLink { id: string; name: string; businessName: string }
+
+export interface User {
+  id: string; email: string; name: string;
+  isAdmin: boolean;
+  business: { id: string; name: string } | null;
+  parentOf: ParentLink[];
+}
+
+/** The minimum a timeline block or quick-add form needs to render a child. */
+export interface ShiftChild { id: string; name: string; colour: string }
+
+export interface Child {
+  id: string; clientId: string; name: string; birthdate: string | null;
+  colour: string; allergies: string; medical: string; routines: string;
+  notes: string; archived: boolean;
+}
+
+export interface Contact {
+  id: string; clientId: string; name: string; email: string; phone: string;
+  relationship: string; isPrimary: boolean; receivesReports: boolean;
+  isEmergency: boolean; canCollect: boolean;
+}
+
+export interface Client {
+  id: string; businessId: string; name: string; address: string;
+  rateCents: number | null; notes: string; houseRules: string; wifi: string;
+  archived: boolean; createdAt: string;
+  access?: 'owner' | 'parent';
+  children?: Child[];
+  contacts?: Contact[];
+  parents?: { id: string; name: string; email: string; since: string }[];
+  shifts?: Shift[];
+  lastShift?: string | null;
+  upcomingShifts?: number;
+}
+
+export type ShiftStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface LogEvent {
-  id: string;
-  sessionId: string;
-  childId: string;
-  type: string;
-  startAt: string;
-  endAt: string | null;
-  note: string;
-  detail: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
+  id: string; shiftId: string; childId: string; type: string;
+  startAt: string; endAt: string | null; note: string;
+  detail: Record<string, unknown>; createdAt: string; updatedAt: string;
 }
 
-export interface Session {
-  id: string;
-  familyId: string;
-  sitterUserId: string;
-  sitterName?: string;
+export interface Shift {
+  id: string; businessId: string; clientId: string; sitterUserId: string;
   date: string;
-  startedAt: string;
-  endedAt: string | null;
-  notes: string;
-  children: SessionChild[];
+  scheduledStart: string | null; scheduledEnd: string | null;
+  startedAt: string | null; endedAt: string | null; cancelledAt: string | null;
+  rateCents: number | null; notes: string; parentNotes: string;
+  reportSentAt: string | null; invoiceId: string | null;
+  status: ShiftStatus; minutes: number | null;
+  client?: Client;
+  clientName?: string;
+  children?: ShiftChild[];
   events?: LogEvent[];
+  sitterName?: string;
   eventCount?: number;
-  role?: 'parent' | 'sitter';
+  access?: 'owner' | 'parent';
 }
 
-export interface Member { id: string; name: string; email: string; role: 'parent' | 'sitter'; joinedAt: string }
-export interface Invite { code: string; role: 'parent' | 'sitter'; expiresAt: string; createdAt: string }
+export interface Invite { code: string; email?: string; expiresAt: string; createdAt: string }
+
+export interface InvoiceItem {
+  shiftId: string; date: string; startedAt: string; endedAt: string;
+  minutes: number; duration: string; rateCents: number; amountCents: number;
+  children: string[];
+}
+
+export interface Invoice {
+  id: string; businessId: string; clientId: string; number: number;
+  periodStart: string; periodEnd: string; minutes: number;
+  totalCents: number; currency: string;
+  status: 'draft' | 'sent' | 'paid' | 'void';
+  notes: string; sentAt: string | null; paidAt: string | null; createdAt: string;
+  clientName?: string; businessName?: string; shiftCount?: number;
+  items?: InvoiceItem[];
+}
+
+export interface InvoicePreview {
+  clientId: string; clientName: string; periodStart: string; periodEnd: string;
+  currency: string; items: InvoiceItem[]; minutes: number; totalCents: number;
+}
+
+export interface Earnings {
+  status: ShiftStatus; minutes: number; rateCents: number;
+  currency: string; totalCents: number; invoiced: boolean;
+}
+
+export interface SendResult {
+  sent: number; configured?: boolean; noRecipients?: boolean;
+  results: { email: string; ok: boolean; error?: string; skipped?: boolean }[];
+}
+
+// --- Transport ---------------------------------------------------------------
 
 export class ApiError extends Error {
   status: number;
@@ -65,69 +134,110 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 const get = <T>(p: string) => request<T>('GET', p);
 const post = <T>(p: string, b?: unknown) => request<T>('POST', p, b ?? {});
 const patch = <T>(p: string, b: unknown) => request<T>('PATCH', p, b);
-const del = <T>(p: string) => request<T>('DELETE', p);
+const del = <T>(p: string, b?: unknown) => request<T>('DELETE', p, b);
 
 export interface EventInput {
-  type: string;
-  childId: string;
-  startAt?: string;
-  endAt?: string | null;
-  note?: string;
-  detail?: Record<string, unknown>;
+  type?: string; childId?: string; startAt?: string; endAt?: string | null;
+  note?: string; detail?: Record<string, unknown>;
 }
 
 export const api = {
+  // Identity
   me: () => get<{ user: User }>('/api/auth/me').then((r) => r.user),
   login: (email: string, password: string) =>
     post<{ user: User }>('/api/auth/login', { email, password }).then((r) => r.user),
-  register: (input: { email: string; password: string; name: string; familyName?: string; inviteCode?: string }) =>
+  register: (input: { email: string; password: string; name: string; businessName?: string; inviteCode?: string }) =>
     post<{ user: User }>('/api/auth/register', input).then((r) => r.user),
   logout: () => post<{ ok: true }>('/api/auth/logout'),
-  joinFamily: (inviteCode: string) =>
+  joinClient: (inviteCode: string) =>
     post<{ user: User }>('/api/auth/join', { inviteCode }).then((r) => r.user),
   changePassword: (currentPassword: string, newPassword: string) =>
     post<{ ok: true }>('/api/auth/password', { currentPassword, newPassword }),
 
-  families: () => get<{ families: Family[] }>('/api/families').then((r) => r.families),
-  createFamily: (name: string) => post<{ family: Family }>('/api/families', { name }).then((r) => r.family),
-  members: (familyId: string) =>
-    get<{ members: Member[] }>(`/api/families/${familyId}/members`).then((r) => r.members),
-  invites: (familyId: string) =>
-    get<{ invites: Invite[] }>(`/api/families/${familyId}/invites`).then((r) => r.invites),
-  createInvite: (familyId: string, role: 'parent' | 'sitter') =>
-    post<{ invite: Invite }>(`/api/families/${familyId}/invites`, { role }).then((r) => r.invite),
-  revokeInvite: (familyId: string, code: string) => del(`/api/families/${familyId}/invites/${code}`),
+  // Business
+  business: () => get<{ business: Business | null }>('/api/business').then((r) => r.business),
+  createBusiness: (input: { name: string; defaultRate?: number; currency?: string }) =>
+    post<{ business: Business }>('/api/business', input).then((r) => r.business),
+  updateBusiness: (input: { name?: string; defaultRate?: number; currency?: string }) =>
+    patch<{ business: Business }>('/api/business', input).then((r) => r.business),
 
-  children: (familyId: string) =>
-    get<{ children: Child[] }>(`/api/families/${familyId}/children`).then((r) => r.children),
-  createChild: (familyId: string, input: { name: string; birthdate?: string | null; colour?: string; notes?: string }) =>
-    post<{ child: Child }>(`/api/families/${familyId}/children`, input).then((r) => r.child),
-  updateChild: (familyId: string, childId: string, input: Partial<Child>) =>
-    patch<{ child: Child }>(`/api/families/${familyId}/children/${childId}`, input).then((r) => r.child),
+  // Clients
+  clients: (includeArchived = false) =>
+    get<{ clients: Client[] }>(`/api/clients${includeArchived ? '?includeArchived=true' : ''}`).then((r) => r.clients),
+  client: (id: string) => get<{ client: Client }>(`/api/clients/${id}`).then((r) => r.client),
+  createClient: (input: Partial<Client> & { name: string; rate?: number }) =>
+    post<{ client: Client }>('/api/clients', input).then((r) => r.client),
+  updateClient: (id: string, input: Record<string, unknown>) =>
+    patch<{ client: Client }>(`/api/clients/${id}`, input).then((r) => r.client),
+  deleteClient: (id: string, confirmName: string) => del(`/api/clients/${id}`, { confirmName }),
 
-  sessions: (familyId: string) =>
-    get<{ sessions: Session[] }>(`/api/families/${familyId}/sessions`).then((r) => r.sessions),
-  createSession: (familyId: string, input: { childIds: string[]; startedAt?: string; notes?: string }) =>
-    post<{ session: Session }>(`/api/families/${familyId}/sessions`, input).then((r) => r.session),
-  session: (sessionId: string) =>
-    get<{ session: Session }>(`/api/sessions/${sessionId}`).then((r) => r.session),
-  updateSession: (sessionId: string, input: { notes?: string; endedAt?: string | null; childIds?: string[] }) =>
-    patch<{ session: Session }>(`/api/sessions/${sessionId}`, input).then((r) => r.session),
-  endSession: (sessionId: string, endedAt?: string) =>
-    post<{ session: Session }>(`/api/sessions/${sessionId}/end`, { endedAt }).then((r) => r.session),
-  deleteSession: (sessionId: string) => del(`/api/sessions/${sessionId}`),
+  createChild: (clientId: string, input: Record<string, unknown>) =>
+    post<{ child: Child }>(`/api/clients/${clientId}/children`, input).then((r) => r.child),
+  updateChild: (clientId: string, childId: string, input: Record<string, unknown>) =>
+    patch<{ child: Child }>(`/api/clients/${clientId}/children/${childId}`, input).then((r) => r.child),
+  deleteChild: (clientId: string, childId: string) => del(`/api/clients/${clientId}/children/${childId}`),
 
-  createEvent: (sessionId: string, input: EventInput) =>
-    post<{ event: LogEvent }>(`/api/sessions/${sessionId}/events`, input).then((r) => r.event),
-  updateEvent: (eventId: string, input: Partial<EventInput>) =>
+  createContact: (clientId: string, input: Record<string, unknown>) =>
+    post<{ contact: Contact }>(`/api/clients/${clientId}/contacts`, input).then((r) => r.contact),
+  updateContact: (clientId: string, contactId: string, input: Record<string, unknown>) =>
+    patch<{ contact: Contact }>(`/api/clients/${clientId}/contacts/${contactId}`, input).then((r) => r.contact),
+  deleteContact: (clientId: string, contactId: string) => del(`/api/clients/${clientId}/contacts/${contactId}`),
+
+  invites: (clientId: string) =>
+    get<{ invites: Invite[] }>(`/api/clients/${clientId}/invites`).then((r) => r.invites),
+  createInvite: (clientId: string, email?: string) =>
+    post<{ invite: Invite }>(`/api/clients/${clientId}/invites`, { email }).then((r) => r.invite),
+  revokeInvite: (clientId: string, code: string) => del(`/api/clients/${clientId}/invites/${code}`),
+  revokeParent: (clientId: string, userId: string) => del(`/api/clients/${clientId}/parents/${userId}`),
+
+  // Shifts
+  shifts: (scope: 'all' | 'upcoming' | 'active' | 'past' = 'all', clientId?: string) =>
+    get<{ shifts: Shift[] }>(`/api/shifts?scope=${scope}${clientId ? `&clientId=${clientId}` : ''}`).then((r) => r.shifts),
+  shift: (id: string) => get<{ shift: Shift }>(`/api/shifts/${id}`).then((r) => r.shift),
+  createShift: (input: {
+    clientId: string; startNow?: boolean; scheduledStart?: string; scheduledEnd?: string;
+    childIds?: string[]; parentNotes?: string; rate?: number;
+  }) => post<{ shift: Shift }>('/api/shifts', input).then((r) => r.shift),
+  updateShift: (id: string, input: Record<string, unknown>) =>
+    patch<{ shift: Shift }>(`/api/shifts/${id}`, input).then((r) => r.shift),
+  startShift: (id: string, startedAt?: string) =>
+    post<{ shift: Shift }>(`/api/shifts/${id}/start`, { startedAt }).then((r) => r.shift),
+  endShift: (id: string, input: { endedAt?: string; notes?: string }) =>
+    post<{ shift: Shift }>(`/api/shifts/${id}/end`, input).then((r) => r.shift),
+  cancelShift: (id: string) => post<{ shift: Shift }>(`/api/shifts/${id}/cancel`).then((r) => r.shift),
+  deleteShift: (id: string) => del(`/api/shifts/${id}`),
+  earnings: (id: string) => get<{ earnings: Earnings }>(`/api/shifts/${id}/earnings`).then((r) => r.earnings),
+
+  // Events
+  createEvent: (shiftId: string, input: EventInput) =>
+    post<{ event: LogEvent }>(`/api/shifts/${shiftId}/events`, input).then((r) => r.event),
+  updateEvent: (eventId: string, input: EventInput) =>
     patch<{ event: LogEvent }>(`/api/events/${eventId}`, input).then((r) => r.event),
   stopEvent: (eventId: string, input: { endAt?: string; detail?: Record<string, unknown>; note?: string }) =>
     post<{ event: LogEvent }>(`/api/events/${eventId}/stop`, input).then((r) => r.event),
   deleteEvent: (eventId: string) => del(`/api/events/${eventId}`),
 
-  report: (sessionId: string) => get<{ report: Report }>(`/api/sessions/${sessionId}/report`).then((r) => r.report),
-  reportText: (sessionId: string) =>
-    fetch(`/api/sessions/${sessionId}/report.txt`, { credentials: 'same-origin' }).then((r) => r.text()),
+  // Reports
+  report: (shiftId: string) => get<{ report: Report }>(`/api/shifts/${shiftId}/report`).then((r) => r.report),
+  reportText: (shiftId: string) =>
+    fetch(`/api/shifts/${shiftId}/report.txt`, { credentials: 'same-origin' }).then((r) => r.text()),
+
+  // Invoicing
+  invoices: (clientId?: string) =>
+    get<{ invoices: Invoice[] }>(`/api/invoices${clientId ? `?clientId=${clientId}` : ''}`).then((r) => r.invoices),
+  invoice: (id: string) => get<{ invoice: Invoice }>(`/api/invoices/${id}`).then((r) => r.invoice),
+  invoicePreview: (clientId: string, periodStart?: string, periodEnd?: string) =>
+    get<{ preview: InvoicePreview }>(
+      `/api/invoices/preview?clientId=${clientId}` +
+      (periodStart ? `&periodStart=${periodStart}` : '') +
+      (periodEnd ? `&periodEnd=${periodEnd}` : ''),
+    ).then((r) => r.preview),
+  createInvoice: (input: { clientId: string; periodStart?: string; periodEnd?: string; notes?: string }) =>
+    post<{ invoice: Invoice }>('/api/invoices', input).then((r) => r.invoice),
+  updateInvoice: (id: string, input: { status?: string; notes?: string }) =>
+    patch<{ invoice: Invoice }>(`/api/invoices/${id}`, input).then((r) => r.invoice),
+  sendInvoice: (id: string) => post<{ result: SendResult }>(`/api/invoices/${id}/send`).then((r) => r.result),
+  deleteInvoice: (id: string) => del(`/api/invoices/${id}`),
 };
 
 // --- Report shapes -----------------------------------------------------------
@@ -138,7 +248,7 @@ export interface ReportEntry {
 }
 
 export interface ChildReport {
-  child: SessionChild;
+  child: { id: string; name: string; colour: string };
   sleep: { napCount: number; inProgress: number; totalMinutes: number; longestMinutes: number; naps: ReportEntry[] };
   food: {
     bottleCount: number; totalOz: number; bottles: ReportEntry[];
@@ -159,15 +269,58 @@ export interface ChildReport {
 }
 
 export interface Report {
-  session: {
+  shift: {
     id: string; date: string; startedAt: string; endedAt: string | null;
-    durationMinutes: number | null; notes: string; sitterName: string; familyName: string;
+    durationMinutes: number | null; notes: string; parentNotes: string;
+    sitterName: string; clientName: string; businessName: string;
   };
   children: ChildReport[];
   generatedAt: string;
 }
 
 // --- Admin -------------------------------------------------------------------
+
+export interface AdminOverview {
+  counts: Record<string, number>;
+  storage: { dbBytes: number; walBytes: number; path: string };
+  mail: {
+    configured: boolean; host: string; port: number; secure: boolean; from: string;
+    authenticated: boolean; adminCount: number; warnings: string[];
+    recentFailures: { to_email: string; subject: string; error: string; created_at: string }[];
+  };
+  runtime: { uptimeSeconds: number; node: string; rssBytes: number; now: string };
+  activity: { last7Days: { date: string; shifts: number }[] };
+}
+
+export interface AdminUser {
+  id: string; email: string; name: string; disabled: boolean;
+  createdAt: string; lastSeenAt: string | null;
+  business: { id: string; name: string } | null;
+  parentOf: { id: string; name: string }[];
+}
+
+export interface AdminBusiness {
+  id: string; name: string; currency: string; defaultRateCents: number;
+  createdAt: string; ownerName: string; ownerEmail: string;
+  clients: number; shifts: number;
+}
+
+export interface AdminBusinessDetail {
+  id: string; name: string; currency: string; defaultRateCents: number; createdAt: string;
+  owner: { id: string; name: string; email: string };
+  clients: { id: string; name: string; archived: number; children: number; shifts: number; parents: number }[];
+}
+
+export interface AdminShift {
+  id: string; clientId: string; clientName: string; businessName: string; sitterName: string;
+  date: string; startedAt: string | null; endedAt: string | null;
+  status: ShiftStatus; minutes: number | null; reportSentAt: string | null; events: number;
+}
+
+export interface EmailLogEntry {
+  id: string; shiftId: string | null; invoiceId: string | null; to: string;
+  subject: string; status: 'sent' | 'failed' | 'skipped'; error: string; createdAt: string;
+}
 
 export const admin = {
   overview: () => get<AdminOverview>('/api/admin/overview'),
@@ -179,15 +332,15 @@ export const admin = {
   deleteUser: (id: string, force = false) =>
     del<{ ok: true }>(`/api/admin/users/${id}${force ? '?force=true' : ''}`),
 
-  families: () => get<{ families: AdminFamily[] }>('/api/admin/families').then((r) => r.families),
-  family: (id: string) => get<{ family: AdminFamilyDetail }>(`/api/admin/families/${id}`).then((r) => r.family),
-  deleteFamily: (id: string, confirmName: string) =>
-    request<{ ok: true }>('DELETE', `/api/admin/families/${id}`, { confirmName }),
+  businesses: () => get<{ businesses: AdminBusiness[] }>('/api/admin/businesses').then((r) => r.businesses),
+  business: (id: string) => get<{ business: AdminBusinessDetail }>(`/api/admin/businesses/${id}`).then((r) => r.business),
+  deleteBusiness: (id: string, confirmName: string) =>
+    del<{ ok: true }>(`/api/admin/businesses/${id}`, { confirmName }),
 
-  sessions: (familyId?: string) =>
-    get<{ sessions: AdminSession[] }>(`/api/admin/sessions${familyId ? `?familyId=${familyId}` : ''}`).then((r) => r.sessions),
-  resendReport: (sessionId: string) =>
-    post<{ result: SendResult }>(`/api/admin/sessions/${sessionId}/resend-report`).then((r) => r.result),
+  shifts: (clientId?: string) =>
+    get<{ shifts: AdminShift[] }>(`/api/admin/shifts${clientId ? `?clientId=${clientId}` : ''}`).then((r) => r.shifts),
+  resendReport: (shiftId: string) =>
+    post<{ result: SendResult }>(`/api/admin/shifts/${shiftId}/resend-report`).then((r) => r.result),
 
   emailLog: (status = '') =>
     get<{ entries: EmailLogEntry[] }>(`/api/admin/email-log${status ? `?status=${status}` : ''}`).then((r) => r.entries),
@@ -199,53 +352,3 @@ export const admin = {
   backup: () => post<{ path: string; bytes: number }>('/api/admin/maintenance/backup'),
   prune: () => post<{ expiredLogins: number; expiredInvites: number; oldEmailLogs: number }>('/api/admin/maintenance/prune'),
 };
-
-export interface AdminOverview {
-  counts: {
-    users: number; disabled: number; families: number; children: number;
-    sessions: number; open: number; events: number; invites: number; logins: number;
-  };
-  storage: { dbBytes: number; walBytes: number; path: string };
-  mail: {
-    configured: boolean; host: string; port: number; secure: boolean; from: string;
-    authenticated: boolean; adminCount: number; warnings: string[];
-    recentFailures: { to_email: string; subject: string; error: string; created_at: string }[];
-  };
-  runtime: { uptimeSeconds: number; node: string; rssBytes: number; now: string };
-  activity: { last7Days: { date: string; sessions: number }[] };
-}
-
-export interface AdminUser {
-  id: string; email: string; name: string; disabled: boolean;
-  createdAt: string; lastSeenAt: string | null;
-  families: { id: string; name: string; role: string }[];
-}
-
-export interface AdminFamily {
-  id: string; name: string; createdAt: string;
-  members: number; children: number; sessions: number;
-}
-
-export interface AdminFamilyDetail {
-  id: string; name: string; createdAt: string;
-  members: { id: string; name: string; email: string; role: string; disabled: number }[];
-  children: { id: string; name: string; colour: string; archived: number }[];
-  sessions: { id: string; date: string; startedAt: string; endedAt: string | null; reportSentAt: string | null; events: number }[];
-  recipients: { email: string; name: string }[];
-}
-
-export interface AdminSession {
-  id: string; familyId: string; familyName: string; sitterName: string;
-  date: string; startedAt: string; endedAt: string | null;
-  reportSentAt: string | null; events: number;
-}
-
-export interface EmailLogEntry {
-  id: string; sessionId: string | null; to: string; subject: string;
-  status: 'sent' | 'failed' | 'skipped'; error: string; createdAt: string;
-}
-
-export interface SendResult {
-  sent: number; configured?: boolean;
-  results: { email: string; ok: boolean; error?: string; skipped?: boolean }[];
-}

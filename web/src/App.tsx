@@ -1,10 +1,15 @@
 import { useAuth } from './lib/auth';
 import { useRoute, match } from './lib/router';
 import { Login } from './screens/Login';
-import { Home } from './screens/Home';
-import { Day } from './screens/Day';
+import { Onboarding } from './screens/Onboarding';
+import { Today } from './screens/Today';
+import { Clients } from './screens/Clients';
+import { ClientDetail } from './screens/ClientDetail';
+import { Shift } from './screens/Shift';
 import { Report } from './screens/Report';
-import { FamilyScreen } from './screens/Family';
+import { Invoices, InvoiceDetail } from './screens/Invoices';
+import { Settings } from './screens/Settings';
+import { ParentHome } from './screens/ParentHome';
 import { Admin } from './screens/Admin';
 import { Spinner } from './components/ui';
 
@@ -15,16 +20,34 @@ export function App() {
   if (loading) return <Spinner />;
   if (!user) return <Login />;
 
-  const report = match(route, '/session/:id/report');
-  if (report) return <Report sessionId={report.id} />;
-
-  const day = match(route, '/session/:id');
-  if (day) return <Day sessionId={day.id} />;
-
   if (match(route, '/admin')) return <Admin />;
 
-  const family = match(route, '/family/:id');
-  if (family) return <FamilyScreen familyId={family.id} />;
+  // Shared between sitters and parents; the API decides what each may see, and
+  // the screens render read-only when access is 'parent'.
+  const report = match(route, '/shift/:id/report');
+  if (report) return <Report shiftId={report.id} />;
 
-  return <Home />;
+  const shift = match(route, '/shift/:id');
+  if (shift) return <Shift shiftId={shift.id} />;
+
+  const client = match(route, '/client/:id');
+  if (client) return <ClientDetail clientId={client.id} />;
+
+  const isSitter = Boolean(user.business);
+
+  if (isSitter) {
+    if (match(route, '/clients')) return <Clients />;
+    if (match(route, '/invoices')) return <Invoices />;
+    if (match(route, '/settings')) return <Settings />;
+
+    const invoice = match(route, '/invoice/:id');
+    if (invoice) return <InvoiceDetail invoiceId={invoice.id} />;
+
+    return <Today />;
+  }
+
+  if (user.parentOf.length > 0) return <ParentHome />;
+
+  // Signed in but neither a sitter nor a parent — offer both paths.
+  return <Onboarding />;
 }

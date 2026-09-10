@@ -1,4 +1,4 @@
-import type { LogEvent, SessionChild } from '../lib/api';
+import type { LogEvent, ShiftChild } from '../lib/api';
 import { typeDef } from '../lib/events';
 import { fmtStopwatch, fmtTime, parse } from '../lib/time';
 
@@ -9,7 +9,7 @@ import { fmtStopwatch, fmtTime, parse } from '../lib/time';
  */
 export function RunningBanner({ running, childList, now, onStop }: {
   running: LogEvent[];
-  childList: SessionChild[];
+  childList: ShiftChild[];
   now: Date;
   onStop: (event: LogEvent) => void;
 }) {

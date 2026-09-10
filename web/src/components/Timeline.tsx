@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import type { LogEvent, SessionChild } from '../lib/api';
+import type { LogEvent, ShiftChild } from '../lib/api';
 import { typeDef } from '../lib/events';
 import { fmtTime, fmtDuration, parse } from '../lib/time';
 
@@ -64,11 +64,11 @@ function place(events: LogEvent[], originMs: number, nowMs: number): Placed[] {
   return items;
 }
 
-export function Timeline({ events, childList, sessionStart, sessionEnd, now, onSelect }: {
+export function Timeline({ events, childList, shiftStart, shiftEnd, now, onSelect }: {
   events: LogEvent[];
-  childList: SessionChild[];
-  sessionStart: string;
-  sessionEnd: string | null;
+  childList: ShiftChild[];
+  shiftStart: string;
+  shiftEnd: string | null;
   now: Date;
   onSelect: (event: LogEvent) => void;
 }) {
@@ -77,9 +77,9 @@ export function Timeline({ events, childList, sessionStart, sessionEnd, now, onS
   const nowMs = now.getTime();
 
   const { originMs, hours } = useMemo(() => {
-    const starts = [parse(sessionStart).getTime(), ...events.map((e) => parse(e.startAt).getTime())];
+    const starts = [parse(shiftStart).getTime(), ...events.map((e) => parse(e.startAt).getTime())];
     const ends = [
-      sessionEnd ? parse(sessionEnd).getTime() : nowMs,
+      shiftEnd ? parse(shiftEnd).getTime() : nowMs,
       ...events.map((e) => (e.endAt ? parse(e.endAt).getTime() : nowMs)),
     ];
 
@@ -94,7 +94,7 @@ export function Timeline({ events, childList, sessionStart, sessionEnd, now, onS
     // continuously across midnight instead of wrapping.
     const span = Math.max(4, Math.round((last.getTime() - origin.getTime()) / 3600_000));
     return { originMs: origin.getTime(), hours: span };
-  }, [events, sessionStart, sessionEnd, nowMs]);
+  }, [events, shiftStart, shiftEnd, nowMs]);
 
   const placed = useMemo(() => place(events, originMs, nowMs), [events, originMs, nowMs]);
 

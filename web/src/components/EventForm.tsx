@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { EventTypeDef } from '../lib/events';
 import { defaultDetail } from '../lib/events';
-import type { LogEvent, SessionChild } from '../lib/api';
+import type { LogEvent, ShiftChild } from '../lib/api';
 import { nowIso, toIso, toLocalInput, fromLocalInput, fmtTime, durationMinutes, fmtDuration, toMinute } from '../lib/time';
 import { Chips, Toggle, NumberPicker, TextField, Field, ErrorNote } from './ui';
 
@@ -58,7 +58,7 @@ export interface EventDraft {
 
 export function EventForm({ def, childList, existing, defaultChildId, submitLabel, onSubmit, onDelete }: {
   def: EventTypeDef;
-  childList: SessionChild[];
+  childList: ShiftChild[];
   existing?: LogEvent;
   defaultChildId?: string;
   submitLabel: string;

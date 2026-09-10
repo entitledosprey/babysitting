@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { QUICK_ADD_ORDER, EVENT_TYPES, typeDef } from '../lib/events';
 import type { EventTypeKey } from '../lib/events';
-import type { LogEvent, SessionChild } from '../lib/api';
+import type { LogEvent, ShiftChild } from '../lib/api';
 import { Sheet } from './ui';
 import { EventForm } from './EventForm';
 import type { EventDraft } from './EventForm';
 
 export function QuickAdd({ childList, defaultChildId, onClose, onCreate }: {
-  childList: SessionChild[];
+  childList: ShiftChild[];
   defaultChildId?: string;
   onClose: () => void;
   onCreate: (type: string, draft: EventDraft) => Promise<void>;
@@ -56,7 +56,7 @@ export function QuickAdd({ childList, defaultChildId, onClose, onCreate }: {
 
 export function EditEvent({ event, childList, onClose, onSave, onDelete }: {
   event: LogEvent;
-  childList: SessionChild[];
+  childList: ShiftChild[];
   onClose: () => void;
   onSave: (draft: EventDraft) => Promise<void>;
   onDelete: () => Promise<void>;

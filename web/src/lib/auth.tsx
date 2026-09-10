@@ -7,7 +7,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (input: { email: string; password: string; name: string; familyName?: string; inviteCode?: string }) => Promise<void>;
+  register: (input: { email: string; password: string; name: string; businessName?: string; inviteCode?: string }) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
