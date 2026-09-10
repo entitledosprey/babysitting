@@ -7,14 +7,14 @@ import { fmtStopwatch, fmtTime, parse } from '../lib/time';
  * "Wake Up" is a single tap — details can be added afterwards by tapping the
  * block, rather than blocking the sitter with a form while holding a child.
  */
-export function RunningBanner({ running, children, now, onStop }: {
+export function RunningBanner({ running, childList, now, onStop }: {
   running: LogEvent[];
-  children: SessionChild[];
+  childList: SessionChild[];
   now: Date;
   onStop: (event: LogEvent) => void;
 }) {
   if (running.length === 0) return null;
-  const byId = new Map(children.map((c) => [c.id, c]));
+  const byId = new Map(childList.map((c) => [c.id, c]));
 
   return (
     <>
@@ -27,7 +27,7 @@ export function RunningBanner({ running, children, now, onStop }: {
             <span className="emoji">{def.emoji}</span>
             <div className="grow" style={{ flex: 1, minWidth: 0 }}>
               <div className="who">
-                {def.label}{children.length > 1 && child ? ` · ${child.name}` : ''}
+                {def.label}{childList.length > 1 && child ? ` · ${child.name}` : ''}
               </div>
               <div className="elapsed">
                 since {fmtTime(event.startAt)} · {fmtStopwatch(seconds)}

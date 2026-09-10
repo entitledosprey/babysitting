@@ -6,8 +6,8 @@ import { Sheet } from './ui';
 import { EventForm } from './EventForm';
 import type { EventDraft } from './EventForm';
 
-export function QuickAdd({ children, defaultChildId, onClose, onCreate }: {
-  children: SessionChild[];
+export function QuickAdd({ childList, defaultChildId, onClose, onCreate }: {
+  childList: SessionChild[];
   defaultChildId?: string;
   onClose: () => void;
   onCreate: (type: string, draft: EventDraft) => Promise<void>;
@@ -42,7 +42,7 @@ export function QuickAdd({ children, defaultChildId, onClose, onCreate }: {
     >
       <EventForm
         def={def}
-        children={children}
+        childList={childList}
         defaultChildId={defaultChildId}
         submitLabel={`Save ${def.label.toLowerCase()}`}
         onSubmit={async (draft) => {
@@ -54,9 +54,9 @@ export function QuickAdd({ children, defaultChildId, onClose, onCreate }: {
   );
 }
 
-export function EditEvent({ event, children, onClose, onSave, onDelete }: {
+export function EditEvent({ event, childList, onClose, onSave, onDelete }: {
   event: LogEvent;
-  children: SessionChild[];
+  childList: SessionChild[];
   onClose: () => void;
   onSave: (draft: EventDraft) => Promise<void>;
   onDelete: () => Promise<void>;
@@ -66,7 +66,7 @@ export function EditEvent({ event, children, onClose, onSave, onDelete }: {
     <Sheet title={`${def.emoji} ${def.label}`} onClose={onClose}>
       <EventForm
         def={def}
-        children={children}
+        childList={childList}
         existing={event}
         submitLabel="Save changes"
         onSubmit={async (draft) => { await onSave(draft); onClose(); }}

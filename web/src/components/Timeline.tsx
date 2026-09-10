@@ -64,9 +64,9 @@ function place(events: LogEvent[], originMs: number, nowMs: number): Placed[] {
   return items;
 }
 
-export function Timeline({ events, children, sessionStart, sessionEnd, now, onSelect }: {
+export function Timeline({ events, childList, sessionStart, sessionEnd, now, onSelect }: {
   events: LogEvent[];
-  children: SessionChild[];
+  childList: SessionChild[];
   sessionStart: string;
   sessionEnd: string | null;
   now: Date;
@@ -110,9 +110,9 @@ export function Timeline({ events, children, sessionStart, sessionEnd, now, onSe
   }, [nowTop, nowVisible]);
 
   const childById = useMemo(
-    () => new Map(children.map((c) => [c.id, c])), [children],
+    () => new Map(childList.map((c) => [c.id, c])), [childList],
   );
-  const showChild = children.length > 1;
+  const showChild = childList.length > 1;
 
   return (
     <div className="content" ref={scroller}>

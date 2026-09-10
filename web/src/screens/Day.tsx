@@ -95,7 +95,7 @@ export function Day({ sessionId }: { sessionId: string }) {
       )}
 
       <div style={{ paddingTop: 12 }}>
-        <RunningBanner running={running} children={session.children} now={now} onStop={stop} />
+        <RunningBanner running={running} childList={session.children} now={now} onStop={stop} />
       </div>
 
       {events.length === 0 ? (
@@ -108,7 +108,7 @@ export function Day({ sessionId }: { sessionId: string }) {
       ) : (
         <Timeline
           events={visible}
-          children={session.children}
+          childList={session.children}
           sessionStart={session.startedAt}
           sessionEnd={session.endedAt}
           now={now}
@@ -135,7 +135,7 @@ export function Day({ sessionId }: { sessionId: string }) {
 
       {adding && (
         <QuickAdd
-          children={session.children}
+          childList={session.children}
           defaultChildId={childFilter === 'all' ? undefined : childFilter}
           onClose={() => setAdding(false)}
           onCreate={create}
@@ -145,7 +145,7 @@ export function Day({ sessionId }: { sessionId: string }) {
       {editing && (
         <EditEvent
           event={editing}
-          children={session.children}
+          childList={session.children}
           onClose={() => setEditing(null)}
           onSave={async (draft) => {
             const updated = await api.updateEvent(editing.id, draft);

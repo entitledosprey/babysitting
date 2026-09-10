@@ -56,7 +56,7 @@ if (existsSync(STATIC_DIR)) {
     setHeaders(res, path) {
       // Vite emits content-hashed asset names, so they can cache hard; the
       // shell must not, or a deploy leaves clients on the old bundle.
-      if (path.includes(`${'/'}assets${'/'}`)) {
+      if (path.includes('/assets/')) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       } else {
         res.setHeader('Cache-Control', 'no-cache');

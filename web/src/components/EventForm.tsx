@@ -56,18 +56,23 @@ export interface EventDraft {
   detail: Record<string, unknown>;
 }
 
-export function EventForm({ def, children, existing, defaultChildId, submitLabel, onSubmit, onDelete }: {
+export function EventForm({ def, childList, existing, defaultChildId, submitLabel, onSubmit, onDelete }: {
   def: EventTypeDef;
-  children: SessionChild[];
+  childList: SessionChild[];
   existing?: LogEvent;
   defaultChildId?: string;
   submitLabel: string;
   onSubmit: (draft: EventDraft) => Promise<void>;
   onDelete?: () => Promise<void>;
 }) {
-  const [childId, setChildId] = useState(existing?.childId ?? defaultChildId ?? children[0]?.id ?? '');
+  const [childId, setChildId] = useState(existing?.childId ?? defaultChildId ?? childList[0]?.id ?? '');
   const [startAt, setStartAt] = useState(existing?.startAt ?? nowIso());
-  const [endAt, setEndAt] = useState<string | null>(existing?.endAt ?? null);
+  // A duration entry that opens already-finished defaults to ending now, so
+  // the sitter nudges the start time back rather than building a range from
+  // a zero-length block.
+  const [endAt, setEndAt] = useState<string | null>(
+    existing?.endAt ?? (!existing && def.duration && !def.stopwatch ? nowIso() : null),
+  );
   const [note, setNote] = useState(existing?.note ?? '');
   const [detail, setDetail] = useState<Record<string, unknown>>(
     existing ? { ...existing.detail } : defaultDetail(def),
@@ -105,10 +110,10 @@ export function EventForm({ def, children, existing, defaultChildId, submitLabel
 
   return (
     <div className="stack">
-      {children.length > 1 && (
+      {childList.length > 1 && (
         <Field label="Who">
           <div className="chips">
-            {children.map((c) => (
+            {childList.map((c) => (
               <button key={c.id} type="button" className="chip" aria-pressed={childId === c.id}
                 onClick={() => setChildId(c.id)}>
                 <span className="child-dot" style={{ ['--cc' as string]: c.colour }} />
